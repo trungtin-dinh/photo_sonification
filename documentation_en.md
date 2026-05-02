@@ -1,23 +1,24 @@
 ## Table of Contents
 
 1. [Overview: From Photo to Musical Composition](#1-overview-from-photo-to-musical-composition)
-2. [Image Representation and Luminance Analysis](#2-image-representation-and-luminance-analysis)
-3. [Spatial Descriptors: Edges, Texture Entropy and Symmetry](#3-spatial-descriptors-edges-texture-entropy-and-symmetry)
-4. [Chromatic and Color Features](#4-chromatic-and-color-features)
-5. [Visual Saliency Estimation](#5-visual-saliency-estimation)
-6. [Two-Dimensional Fourier Analysis](#6-two-dimensional-fourier-analysis)
-7. [Automatic Musical Parameters](#7-automatic-musical-parameters)
-8. [Chord Progression and Harmonic Structure](#8-chord-progression-and-harmonic-structure)
-9. [Melody and Layered Composition](#9-melody-and-layered-composition)
-10. [Automatic and Manual Instrument Selection](#10-automatic-and-manual-instrument-selection)
-11. [Additive Synthesis and ADSR Envelopes](#11-additive-synthesis-and-adsr-envelopes)
-12. [Saliency-Driven Solo Layer](#12-saliency-driven-solo-layer)
-13. [Stereo Rendering and Equal-Power Panning](#13-stereo-rendering-and-equal-power-panning)
-14. [Master Bus Processing](#14-master-bus-processing)
-15. [MIDI Export](#15-midi-export)
-16. [Random Factor and Controlled Perturbations](#16-random-factor-and-controlled-perturbations)
-17. [Audio Analysis Plots](#17-audio-analysis-plots)
-18. [Limitations and Interpretation](#18-limitations-and-interpretation)
+2. [Visual-to-Musical Mapping at a Glance](#2-visual-to-musical-mapping-at-a-glance)
+3. [Image Representation and Luminance Analysis](#3-image-representation-and-luminance-analysis)
+4. [Spatial Descriptors: Edges, Texture Entropy and Symmetry](#4-spatial-descriptors-edges-texture-entropy-and-symmetry)
+5. [Chromatic and Color Features](#5-chromatic-and-color-features)
+6. [Visual Saliency Estimation](#6-visual-saliency-estimation)
+7. [Two-Dimensional Fourier Analysis](#7-two-dimensional-fourier-analysis)
+8. [Automatic Musical Parameters](#8-automatic-musical-parameters)
+9. [Chord Progression and Harmonic Structure](#9-chord-progression-and-harmonic-structure)
+10. [Melody and Layered Composition](#10-melody-and-layered-composition)
+11. [Automatic and Manual Instrument Selection](#11-automatic-and-manual-instrument-selection)
+12. [Additive Synthesis and ADSR Envelopes](#12-additive-synthesis-and-adsr-envelopes)
+13. [Saliency-Driven Solo Layer](#13-saliency-driven-solo-layer)
+14. [Stereo Rendering and Equal-Power Panning](#14-stereo-rendering-and-equal-power-panning)
+15. [Master Bus Processing](#15-master-bus-processing)
+16. [MIDI Export](#16-midi-export)
+17. [Random Factor and Controlled Perturbations](#17-random-factor-and-controlled-perturbations)
+18. [Audio Analysis Plots](#18-audio-analysis-plots)
+19. [Limitations and Interpretation](#19-limitations-and-interpretation)
 
 ---
 
@@ -56,7 +57,46 @@ The composition is organized into six layers:
 
 ---
 
-## 2. Image Representation and Luminance Analysis
+## 2. Visual-to-Musical Mapping at a Glance
+
+Before entering the mathematical detail of each module, this section provides a consolidated reading of the full pipeline. Every musical decision in the composition traces back to a specific, named visual quantity. The table below is the complete map.
+
+| Visual descriptor | How it is measured | What it controls in the music |
+|---|---|---|
+| **Mean luminance** (brightness) | spatial mean of the perceptual luminance field $Y$ | melodic register (dark → low octave, bright → high octave); bass weight; mood label |
+| **Luminance contrast** | standard deviation of $Y$ | tempo (Scientific/Balanced modes); chord hit velocity; melodic velocity spread |
+| **Shadow proportion** | fraction of pixels below an adaptive low-percentile threshold | bass velocity; scale tendency toward minor/Dorian; pad weight; tempo reduction |
+| **Highlight proportion** | fraction of pixels above an adaptive high-percentile threshold | arpeggio frequency; bright-timbre affinity (bells, celesta); chord activity |
+| **Edge density** | fraction of gradient-magnitude pixels above an adaptive 75th-percentile threshold | tempo (dominant term in Scientific mode); attack sharpness; rhythmic activity |
+| **Texture entropy** | normalized Shannon entropy of the edge-magnitude histogram | composition complexity (note density); bar-count default; instrument brightness affinity |
+| **Symmetry score** | mean absolute difference between $Y$ and its left-right / top-bottom mirrors | variation strength default (symmetric → stable loop; asymmetric → strong evolution) |
+| **Dominant hue** | circular weighted mean of the hue angle, weighted by saturation and luminance | tonal key (mapped to 12 chromatic pitch classes) |
+| **Warmth** | mean red-minus-blue channel difference | scale preference toward Lydian/Major vs. Dorian/Natural minor; instrument warm-tone affinity |
+| **Mean saturation** | mean of the HSV saturation channel | scale selection (Dorian preference at moderate saturation); instrument colorfulness affinity |
+| **Bright centroid** (horizontal) | center of mass of bright pixels along the horizontal axis | stereo pan bias of the main melody and chord layers |
+| **Shadow centroid** (horizontal) | center of mass of shadow pixels along the horizontal axis | stereo pan bias of the bass layer |
+| **Low Fourier energy** | fraction of non-DC power in radial frequencies $r < 0.14$ | pad velocity and sustain weight; bass strength; smooth-timbre affinity (strings, organ) |
+| **High Fourier energy** | fraction of non-DC power in radial frequencies $r \geq 0.34$ | arpeggio density; texture layer brightness; tempo boost (Scientific mode); bright-timbre affinity |
+| **Spectral centroid** | power-weighted mean radial frequency | tempo contribution (Scientific mode); texture density |
+| **Spectral bandwidth** | power-weighted standard deviation around the centroid | arpeggio density; texture richness |
+| **Periodic peak score** | ratio of extreme Fourier peak to background power | scale tendency toward pentatonic; melodic repetition; percussive-timbre affinity (kalimba, marimba) |
+| **Saliency peak / area / spread** | derived from a 3-component saliency map (color rarity + luminance rarity + edge strength) | number of solo-layer accent notes; their durations; whether the solo layer is sparse or dense |
+| **Saliency pixel positions** | horizontal and vertical coordinates of the most salient pixels | timing and pitch of each individual solo note |
+| **Luminance slice sequence** | left-to-right scan of vertical slice energies and vertical centroids | full melodic contour of the main layer: each image column becomes one note |
+| **Color palette trajectory** | ordered sequence of dominant color clusters, left to right | chord progression selection: hue diversity and brightness jumps drive harmonic variety |
+
+A few design principles are apparent from reading this table together:
+
+- **Tempo and rhythm** are driven primarily by spatial complexity: edge density, contrast and high Fourier energy. Smooth, low-contrast images tend to produce slow, sparse rhythms; sharp, detailed images tend to produce faster, denser ones.
+- **Tonality and mode** are driven primarily by perceptual color: hue → key, brightness + warmth → mode, saturation → modal nuance.
+- **Instrumentation** integrates all feature groups: dark and smooth → strings and pads; bright and detailed → bells and plucked instruments; periodic → mallet percussion.
+- **Melody** has the most direct spatial encoding: the image is literally read left-to-right, top-to-bottom, with brighter high-placed regions producing higher pitches.
+- **Harmony** bridges color and structure: the dominant color palette is ordered spatially and its diversity drives chord progression variety.
+- **Stereo image** mirrors the spatial layout of the photo: bright regions pan the melody to the side where brightness is concentrated; shadow regions anchor the bass.
+
+---
+
+## 3. Image Representation and Luminance Analysis
 
 ### 2.1 Input Normalization
 
@@ -128,7 +168,7 @@ The bright centroid uses $w = \max(Y - \mu_Y, 0)$, the shadow centroid uses $w =
 
 ---
 
-## 3. Spatial Descriptors: Edges, Texture Entropy and Symmetry
+## 4. Spatial Descriptors: Edges, Texture Entropy and Symmetry
 
 ### 3.1 Gradient-Based Edge Map
 
@@ -202,7 +242,7 @@ A symmetric image therefore tends to produce stable, repetitive musical forms. A
 
 ---
 
-## 4. Chromatic and Color Features
+## 5. Chromatic and Color Features
 
 ### 4.1 HSV Decomposition
 
@@ -254,7 +294,7 @@ A positive value indicates a warm-toned image (more red, orange or yellow), whil
 
 ---
 
-## 5. Visual Saliency Estimation
+## 6. Visual Saliency Estimation
 
 ### 5.1 Motivation
 
@@ -324,7 +364,7 @@ where $x_n = x/(W-1)$, $y_n = y/(H-1)$ and $w(x,y) = \mathcal{S}(x,y) \cdot \mat
 
 ---
 
-## 6. Two-Dimensional Fourier Analysis
+## 7. Two-Dimensional Fourier Analysis
 
 ### 6.1 Preprocessing
 
@@ -408,7 +448,7 @@ where $P_q$ denotes the $q$-th percentile over all non-DC power values and $\var
 
 ---
 
-## 7. Automatic Musical Parameters
+## 8. Automatic Musical Parameters
 
 ### 7.1 Tonal Center
 
@@ -493,7 +533,7 @@ $$
 
 ---
 
-## 8. Chord Progression and Harmonic Structure
+## 9. Chord Progression and Harmonic Structure
 
 ### 8.1 Triads from Scale Degrees
 
@@ -523,7 +563,7 @@ When the variation strength exceeds 0.45, the second half of the composition use
 
 ---
 
-## 9. Melody and Layered Composition
+## 10. Melody and Layered Composition
 
 ### 9.1 Available Note Set
 
@@ -581,7 +621,7 @@ Bass events follow a root–fifth pattern: the root note at beat 1 and the perfe
 
 ---
 
-## 10. Automatic and Manual Instrument Selection
+## 11. Automatic and Manual Instrument Selection
 
 ### 10.1 Simple Synthesizer Mode
 
@@ -630,7 +670,7 @@ Note velocities after gain application are clipped to $[0, 1]$.
 
 ---
 
-## 11. Additive Synthesis and ADSR Envelopes
+## 12. Additive Synthesis and ADSR Envelopes
 
 ### 11.1 ADSR Model
 
@@ -701,7 +741,7 @@ After envelope application, each note is peak-normalized and multiplied by its v
 
 ---
 
-## 12. Saliency-Driven Solo Layer
+## 13. Saliency-Driven Solo Layer
 
 ### 12.1 Motivation
 
@@ -751,7 +791,7 @@ $$
 
 ---
 
-## 13. Stereo Rendering and Equal-Power Panning
+## 14. Stereo Rendering and Equal-Power Panning
 
 ### 13.1 Event-to-Sample Placement
 
@@ -775,7 +815,7 @@ The pan values are derived from visual positions:
 
 ---
 
-## 14. Master Bus Processing
+## 15. Master Bus Processing
 
 After all layers have been mixed into the stereo buffer, a master bus normalization stage is applied. It does not alter individual layer gains; it operates solely on the final stereo mix.
 
@@ -801,7 +841,7 @@ This two-stage process (RMS then peak) ensures a consistent loudness level acros
 
 ---
 
-## 15. MIDI Export
+## 16. MIDI Export
 
 ### 15.1 MIDI File Structure
 
@@ -839,7 +879,7 @@ MIDI delta times are encoded in the variable-length quantity (VLQ) format: the b
 
 ---
 
-## 16. Random Factor and Controlled Perturbations
+## 17. Random Factor and Controlled Perturbations
 
 The random factor $r \in [0, 100]$ adds controlled perturbations to the image and Fourier analysis used for composition generation. It does not replace the photo-based mapping by pure randomness.
 
@@ -867,7 +907,7 @@ The photo analysis panel always displays the unperturbed analysis (computed with
 
 ---
 
-## 17. Audio Analysis Plots
+## 18. Audio Analysis Plots
 
 The audio analysis panel displays the frequency content and time-domain waveform of the generated composition, broken down per layer. All frequency plots use the magnitude of the one-sided DFT:
 
@@ -894,7 +934,7 @@ Each per-layer plot is rendered by re-synthesizing only the note events belongin
 
 ---
 
-## 18. Limitations and Interpretation
+## 19. Limitations and Interpretation
 
 **Semantic blindness.** The app extracts only measurable visual quantities: luminance, gradient magnitude, color statistics, spatial frequency content and saliency derived from color rarity and edge contrast. It has no representation of objects, scenes or semantics. An image of a calm forest and an abstract painting with similar brightness, edge density and color distribution will produce similar musical outputs. This is a fundamental consequence of using interpretable signal-processing features.
 
