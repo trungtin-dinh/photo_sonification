@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import io
 import json
 import math
@@ -37,6 +38,85 @@ DEFAULT_IMAGE_CAPTION = (
     "to replace this default image."
 )
 DEFAULT_IMAGE_NAME = "Félix De Boeck, Night lights, 1954"
+
+PORTFOLIO_LINKS = [
+    {
+        "platform": "Streamlit",
+        "label": "trungtin-dinh",
+        "url": "https://share.streamlit.io/user/trungtin-dinh",
+        "icon_url": "https://cdn.simpleicons.org/streamlit/FF4B4B",
+    },
+    {
+        "platform": "GitHub",
+        "label": "trungtin-dinh",
+        "url": "https://github.com/trungtin-dinh",
+        "icon_url": "https://cdn.simpleicons.org/github/FFFFFF",
+    },
+    {
+        "platform": "LinkedIn",
+        "label": "Trung-Tin Dinh",
+        "url": "https://www.linkedin.com/in/trung-tin-dinh/",
+        "icon_url": "https://static.licdn.com/aero-v1/sc/h/al2o9zrvru7aqj8e1x2rzsrca",
+    },
+    {
+        "platform": "Hugging Face",
+        "label": "trungtindinh",
+        "url": "https://huggingface.co/trungtindinh",
+        "icon_url": "https://cdn.simpleicons.org/huggingface/FFD21E",
+    },
+    {
+        "platform": "Medium",
+        "label": "@trungtin.dinh",
+        "url": "https://medium.com/@trungtin.dinh",
+        "icon_url": "https://cdn.simpleicons.org/medium/FFFFFF",
+    },
+    {
+        "platform": "CV FR",
+        "label": "CV FR",
+        "url": "http://e.pc.cd/t2ly6alK",
+        "icon_url": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/icons/file-earmark-pdf.svg",
+    },
+    {
+        "platform": "CV EN",
+        "label": "CV EN",
+        "url": "http://e.pc.cd/KjMotalK",
+        "icon_url": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/icons/file-earmark-pdf.svg",
+    },
+]
+
+
+def render_portfolio_links() -> None:
+    links_html_parts = []
+
+    for item in PORTFOLIO_LINKS:
+        show_label = item["platform"] in {"CV FR", "CV EN"}
+        link_class = "portfolio-link with-label" if show_label else "portfolio-link icon-only"
+        title = f"Open {item['platform']}"
+        if not show_label:
+            title = f"Open {item['platform']}: {item['label']}"
+
+        label_html = ""
+        if show_label:
+            label_html = f'<span class="portfolio-label">{html.escape(item["label"])}</span>'
+
+        links_html_parts.append(
+            f'<a class="{link_class}" '
+            f'href="{html.escape(item["url"], quote=True)}" '
+            f'target="_blank" '
+            f'rel="noopener noreferrer" '
+            f'title="{html.escape(title, quote=True)}" '
+            f'aria-label="{html.escape(title, quote=True)}">'
+            f'<img class="portfolio-icon" '
+            f'src="{html.escape(item["icon_url"], quote=True)}" '
+            f'alt="{html.escape(item["platform"], quote=True)} icon">'
+            f'{label_html}'
+            f'</a>'
+        )
+
+    st.markdown(
+        f'<div class="portfolio-link-row">{"".join(links_html_parts)}</div>',
+        unsafe_allow_html=True,
+    )
 
 SYNTH_SIMPLE = "Simple"
 SYNTH_GENERALUSER_GS = "GeneralUser GS"
@@ -1155,8 +1235,102 @@ div[data-testid="stMetricValue"] { font-size: 1.12rem; }
 div[data-testid="stExpander"] details { border-radius: 0.45rem; }
 div[data-testid="stButton"] > button { border-radius: 0.45rem; min-height: 2.35rem; white-space: normal; }
 div[data-testid="stButton"] > button[kind="primary"] { font-weight: 650; }
+
+.portfolio-link-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.42rem;
+    min-height: 2.35rem;
+    margin: 0 0 -2.65rem 0;
+    padding-right: 0.15rem;
+    position: relative;
+    z-index: 20;
+}
+
+.portfolio-link,
+.portfolio-link:visited {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 2rem !important;
+    border: 1px solid rgba(250, 250, 250, 0.22) !important;
+    border-radius: 0.45rem !important;
+    color: inherit !important;
+    text-decoration: none !important;
+    font-size: 0.80rem !important;
+    font-weight: 600 !important;
+    line-height: 1 !important;
+    background: rgba(255, 255, 255, 0.03) !important;
+    white-space: nowrap !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+}
+
+.portfolio-link:hover {
+    border-color: rgb(255, 75, 75) !important;
+    color: rgb(255, 75, 75) !important;
+    background: rgba(255, 75, 75, 0.08) !important;
+    text-decoration: none !important;
+}
+
+.portfolio-link.icon-only,
+.portfolio-link.icon-only:visited {
+    width: 2rem !important;
+    min-width: 2rem !important;
+    max-width: 2rem !important;
+    padding: 0 !important;
+    gap: 0 !important;
+}
+
+.portfolio-link.with-label,
+.portfolio-link.with-label:visited {
+    width: auto !important;
+    padding: 0 0.58rem !important;
+    gap: 0.38rem !important;
+}
+
+.portfolio-icon {
+    display: block !important;
+    width: 1.12rem !important;
+    height: 1.12rem !important;
+    min-width: 1.12rem !important;
+    max-width: 1.12rem !important;
+    object-fit: contain !important;
+    flex: 0 0 auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+}
+
+.portfolio-label {
+    display: inline-block !important;
+}
+
+.portfolio-link.icon-only .portfolio-label {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+
+@media (max-width: 1180px) {
+    .portfolio-link-row {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        margin-bottom: 0.65rem;
+        padding-right: 0;
+    }
+}
+
+
 </style>
 """, unsafe_allow_html=True)
+
+render_portfolio_links()
 
 app_tab, doc_fr_tab, doc_en_tab = st.tabs(["App", "Documentation FR", "Documentation EN"])
 for key, default in {"generation_result": None, "generation_message": None, "generation_message_type": None, "parameter_defaults": None, "photo_analysis_cache": None}.items():
