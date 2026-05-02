@@ -19,7 +19,14 @@ import matplotlib.pyplot as plt
 import matplotlib.mlab as mlab
 import numpy as np
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
+
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    HEIF_SUPPORT = True
+except Exception:
+    HEIF_SUPPORT = False
 
 APP_TITLE = "Photo Sonification Lab"
 DEFAULT_SAMPLE_RATE = 44100
@@ -38,6 +45,8 @@ DEFAULT_IMAGE_CAPTION = (
     "to replace this default image."
 )
 DEFAULT_IMAGE_NAME = "Félix De Boeck, Night lights, 1954"
+SUPPORTED_IMAGE_TYPES = ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "heic", "heif", "hif"]
+HEIF_IMAGE_TYPES = {"heic", "heif", "hif"}
 
 PORTFOLIO_LINKS = [
     {
@@ -56,7 +65,7 @@ PORTFOLIO_LINKS = [
         "platform": "LinkedIn",
         "label": "Trung-Tin Dinh",
         "url": "https://www.linkedin.com/in/trung-tin-dinh/",
-        "icon_url": "https://static.licdn.com/aero-v1/sc/h/al2o9zrvru7aqj8e1x2rzsrca",
+        "icon_url": "https://cdn.simpleicons.org/linkedin/0A66C2",
     },
     {
         "platform": "Hugging Face",
@@ -281,6 +290,26 @@ def load_image_bytes_from_url(url: str, timeout: float = 20.0) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return response.read()
+
+
+def open_image_from_bytes(image_bytes: bytes, filename: str = "") -> Image.Image:
+    extension = os.path.splitext(filename or "")[1].lower().lstrip(".")
+    if extension in HEIF_IMAGE_TYPES and not HEIF_SUPPORT:
+        raise RuntimeError(
+            "HEIC/HEIF support requires the optional dependency `pillow-heif`. "
+            "Add `pillow-heif` to requirements.txt and redeploy the app."
+        )
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        image = ImageOps.exif_transpose(image)
+        return image.convert("RGB")
+    except Exception as exc:
+        if extension in HEIF_IMAGE_TYPES:
+            raise RuntimeError(
+                "Could not decode this HEIC/HEIF image. Make sure `pillow-heif` is installed "
+                "and listed in requirements.txt."
+            ) from exc
+        raise RuntimeError(f"Could not decode this image file: {exc}") from exc
 
 
 def image_to_rgb_array(image: Image.Image, max_side: Optional[int] = MAX_ANALYSIS_SIDE) -> np.ndarray:
@@ -1341,16 +1370,16 @@ with app_tab:
     uploaded_bytes = None; uploaded_image = None; uploaded_hash = None; upload_error = None; input_name = DEFAULT_IMAGE_NAME; input_is_default = False
     with input_col:
         st.markdown("<div class='column-title'>Input photo</div>", unsafe_allow_html=True)
-        uploaded = st.file_uploader("Input photo", type=["png", "jpg", "jpeg", "webp", "bmp"], accept_multiple_files=False, label_visibility="collapsed")
+        uploaded = st.file_uploader("Input photo", type=SUPPORTED_IMAGE_TYPES, accept_multiple_files=False, label_visibility="collapsed")
         if uploaded is not None:
             try:
-                uploaded_bytes = uploaded.getvalue(); uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest(); uploaded_image = Image.open(io.BytesIO(uploaded_bytes)).convert("RGB"); input_name = uploaded.name
+                uploaded_bytes = uploaded.getvalue(); uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest(); uploaded_image = open_image_from_bytes(uploaded_bytes, uploaded.name); input_name = uploaded.name
                 st.image(uploaded_image, width="stretch")
             except Exception as exc:
                 upload_error = str(exc); st.error(f"Could not read this image: {exc}")
         else:
             try:
-                uploaded_bytes = load_image_bytes_from_url(DEFAULT_IMAGE_URL); uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest(); uploaded_image = Image.open(io.BytesIO(uploaded_bytes)).convert("RGB"); input_is_default = True
+                uploaded_bytes = load_image_bytes_from_url(DEFAULT_IMAGE_URL); uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest(); uploaded_image = open_image_from_bytes(uploaded_bytes, DEFAULT_IMAGE_URL); input_is_default = True
                 st.image(uploaded_image, width="stretch"); st.caption(DEFAULT_IMAGE_CAPTION)
             except Exception as exc:
                 upload_error = str(exc); st.info("The default test image could not be loaded. Please load a photo here.")
