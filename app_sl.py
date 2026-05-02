@@ -24,7 +24,8 @@ APP_TITLE = "Photo Sonification Lab"
 DEFAULT_SAMPLE_RATE = 44100
 # Use None to keep the original image resolution for all image-derived analyses.
 # This affects luminance, edges, Fourier descriptors, palette extraction, and displayed maps.
-MAX_ANALYSIS_SIDE = None
+#MAX_ANALYSIS_SIDE = None
+MAX_ANALYSIS_SIDE = int(os.getenv("MAX_ANALYSIS_SIDE", "1024"))
 MAX_RENDER_SECONDS = 120.0
 
 DEFAULT_IMAGE_URL = "https://media.mutualart.com/Images/2016_04/28/19/194441798/8a90ad07-2349-43df-825f-c3ecacc072e2_570.Jpeg"
