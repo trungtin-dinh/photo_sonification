@@ -21,7 +21,9 @@ from PIL import Image
 
 APP_TITLE = "Photo Sonification Lab"
 DEFAULT_SAMPLE_RATE = 44100
-MAX_ANALYSIS_SIDE = 256
+# Use None to keep the original image resolution for all image-derived analyses.
+# This affects luminance, edges, Fourier descriptors, palette extraction, and displayed maps.
+MAX_ANALYSIS_SIDE = None
 MAX_RENDER_SECONDS = 120.0
 
 
@@ -42,12 +44,13 @@ def midi_to_freq(midi_note: float) -> float:
     return 440.0 * (2.0 ** ((float(midi_note) - 69.0) / 12.0))
 
 
-def image_to_rgb_array(image: Image.Image, max_side: int = MAX_ANALYSIS_SIDE) -> np.ndarray:
+def image_to_rgb_array(image: Image.Image, max_side: Optional[int] = MAX_ANALYSIS_SIDE) -> np.ndarray:
     img = image.convert("RGB")
-    w, h = img.size
-    scale = min(1.0, max_side / max(w, h))
-    if scale < 1.0:
-        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+    if max_side is not None:
+        w, h = img.size
+        scale = min(1.0, float(max_side) / max(w, h))
+        if scale < 1.0:
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
     return np.asarray(img).astype(np.float64) / 255.0
 
 
@@ -253,6 +256,206 @@ def compute_bar_settings(features: Dict[str, float]) -> Tuple[int, int, int]:
     return min_bars, max_bars, default_bars
 
 
+
+def _rgb_to_hsv_arrays(rgb: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    mx = np.maximum.reduce([r, g, b])
+    mn = np.minimum.reduce([r, g, b])
+    diff = mx - mn
+    sat = np.where(mx > 1e-12, diff / np.maximum(mx, 1e-12), 0.0)
+    hue = np.zeros_like(mx)
+    mask = diff > 1e-12
+    r_is_max = (mx == r) & mask
+    g_is_max = (mx == g) & mask
+    b_is_max = (mx == b) & mask
+    hue[r_is_max] = ((g[r_is_max] - b[r_is_max]) / diff[r_is_max]) % 6.0
+    hue[g_is_max] = ((b[g_is_max] - r[g_is_max]) / diff[g_is_max]) + 2.0
+    hue[b_is_max] = ((r[b_is_max] - g[b_is_max]) / diff[b_is_max]) + 4.0
+    hue = (hue / 6.0) % 1.0
+    return hue, sat, mx
+
+
+def circular_hue_distance(h1: float, h2: float) -> float:
+    d = abs(float(h1) - float(h2)) % 1.0
+    return float(min(d, 1.0 - d) * 2.0)
+
+
+def compute_color_palette_trajectory(rgb: np.ndarray, luminance: np.ndarray, n_colors: int = 5) -> Dict[str, float]:
+    """Dominant color palette trajectory used for deterministic harmonic diversity.
+
+    The extraction is deliberately non-learning: a small deterministic k-means is run in
+    RGB-luminance space, then the resulting color clusters are ordered from left to
+    right according to their spatial centroids. The ordered palette gives a visual
+    trajectory that can drive chord progression choice without adding UI parameters.
+    """
+    rgb = np.asarray(rgb, dtype=np.float64)
+    luminance = np.asarray(luminance, dtype=np.float64)
+    h, w = luminance.shape
+    pixels = rgb.reshape(-1, 3)
+    lum_flat = luminance.ravel()
+    n_pixels = pixels.shape[0]
+    n_colors = int(clamp(n_colors, 2, 8))
+
+    hue_map, sat_map, val_map = _rgb_to_hsv_arrays(rgb)
+    hue_flat = hue_map.ravel()
+    sat_flat = sat_map.ravel()
+    val_flat = val_map.ravel()
+    y_grid, x_grid = np.indices((h, w))
+    x_flat = x_grid.ravel() / max(1, w - 1)
+    y_flat = y_grid.ravel() / max(1, h - 1)
+
+    if n_pixels == 0:
+        out = {
+            "palette_count": 0.0,
+            "palette_entropy": 0.0,
+            "palette_hue_spread": 0.0,
+            "palette_saturation_mean": 0.0,
+            "palette_brightness_range": 0.0,
+            "palette_transition_tension": 0.0,
+            "palette_spatial_flow": 0.0,
+        }
+        for i in range(n_colors):
+            out.update({
+                f"palette_hue_{i}": 0.0,
+                f"palette_saturation_{i}": 0.0,
+                f"palette_brightness_{i}": 0.0,
+                f"palette_weight_{i}": 0.0,
+                f"palette_x_{i}": 0.5,
+                f"palette_y_{i}": 0.5,
+            })
+        return out
+
+    # Deterministic subsampling keeps the app responsive while preserving the photo.
+    sample_count = min(8192, n_pixels)
+    sample_idx = np.linspace(0, n_pixels - 1, sample_count, dtype=int)
+    sample_rgb = pixels[sample_idx]
+    sample_lum = lum_flat[sample_idx]
+    sample_sat = sat_flat[sample_idx]
+    sample_feat = np.column_stack([sample_rgb, 0.35 * sample_lum])
+
+    # Deterministic farthest-point initialization. Saturated and contrasted pixels
+    # are more likely to initialize clusters, which improves palette diversity.
+    importance = 0.35 + 0.45 * sample_sat + 0.20 * np.abs(sample_lum - float(np.mean(sample_lum)))
+    centers = np.empty((n_colors, sample_feat.shape[1]), dtype=np.float64)
+    first_idx = int(np.argmax(importance))
+    centers[0] = sample_feat[first_idx]
+    min_d2 = np.sum((sample_feat - centers[0]) ** 2, axis=1)
+    for k in range(1, n_colors):
+        next_idx = int(np.argmax(min_d2 * importance))
+        centers[k] = sample_feat[next_idx]
+        min_d2 = np.minimum(min_d2, np.sum((sample_feat - centers[k]) ** 2, axis=1))
+
+    for _ in range(12):
+        d2 = np.sum((sample_feat[:, None, :] - centers[None, :, :]) ** 2, axis=2)
+        labels = np.argmin(d2, axis=1)
+        new_centers = centers.copy()
+        for k in range(n_colors):
+            mask = labels == k
+            if np.any(mask):
+                new_centers[k] = np.mean(sample_feat[mask], axis=0)
+        if np.max(np.abs(new_centers - centers)) < 1e-5:
+            centers = new_centers
+            break
+        centers = new_centers
+
+    all_feat = np.column_stack([pixels, 0.35 * lum_flat])
+    all_d2 = np.sum((all_feat[:, None, :] - centers[None, :, :]) ** 2, axis=2)
+    all_labels = np.argmin(all_d2, axis=1)
+
+    clusters = []
+    for k in range(n_colors):
+        mask = all_labels == k
+        count = int(np.sum(mask))
+        if count <= 0:
+            continue
+        weight = count / max(1, n_pixels)
+        sat_weight = sat_flat[mask] + 1e-3
+        hue_angle = 2.0 * np.pi * hue_flat[mask]
+        hue_mean = (math.atan2(float(np.sum(sat_weight * np.sin(hue_angle))), float(np.sum(sat_weight * np.cos(hue_angle)))) / (2.0 * np.pi)) % 1.0
+        clusters.append({
+            "weight": float(weight),
+            "hue": float(hue_mean),
+            "saturation": float(np.mean(sat_flat[mask])),
+            "brightness": float(np.mean(lum_flat[mask])),
+            "value": float(np.mean(val_flat[mask])),
+            "x": float(np.mean(x_flat[mask])),
+            "y": float(np.mean(y_flat[mask])),
+        })
+
+    if not clusters:
+        clusters = [{"weight": 1.0, "hue": 0.0, "saturation": 0.0, "brightness": float(np.mean(lum_flat)), "value": float(np.mean(val_flat)), "x": 0.5, "y": 0.5}]
+
+    # Ignore very tiny regions in the trajectory, unless that would remove everything.
+    significant = [c for c in clusters if c["weight"] >= 0.025]
+    if not significant:
+        significant = sorted(clusters, key=lambda c: c["weight"], reverse=True)[:1]
+
+    # Palette trajectory: color regions are ordered from left to right, with vertical
+    # position as a weak tie-breaker. This produces a deterministic harmonic motion.
+    trajectory = sorted(significant, key=lambda c: (c["x"], c["y"]))
+    total_weight = sum(c["weight"] for c in trajectory) + 1e-12
+    for c in trajectory:
+        c["weight"] = float(c["weight"] / total_weight)
+
+    weights = np.array([c["weight"] for c in trajectory], dtype=np.float64)
+    entropy = 0.0
+    if weights.size > 1:
+        entropy = -float(np.sum(weights * np.log2(np.maximum(weights, 1e-12)))) / math.log2(len(weights))
+        entropy = clamp(entropy, 0.0, 1.0)
+
+    if len(trajectory) > 1:
+        transitions = []
+        for c0, c1 in zip(trajectory[:-1], trajectory[1:]):
+            hue_dist = circular_hue_distance(c0["hue"], c1["hue"])
+            sat_pair = 0.5 * (c0["saturation"] + c1["saturation"])
+            bright_jump = abs(c1["brightness"] - c0["brightness"])
+            transitions.append(clamp(0.65 * hue_dist * sat_pair + 0.35 * bright_jump, 0.0, 1.0))
+        transition_tension = float(np.mean(transitions))
+        spatial_flow = float(trajectory[-1]["brightness"] - trajectory[0]["brightness"])
+    else:
+        transition_tension = 0.0
+        spatial_flow = 0.0
+
+    hue_values = [c["hue"] for c in trajectory]
+    hue_spread = 0.0
+    if len(hue_values) > 1:
+        pairwise = [circular_hue_distance(a, b) for i, a in enumerate(hue_values) for b in hue_values[i + 1:]]
+        hue_spread = float(np.mean(pairwise)) if pairwise else 0.0
+
+    brightness_values = [c["brightness"] for c in trajectory]
+    saturation_values = [c["saturation"] for c in trajectory]
+    out = {
+        "palette_count": float(len(trajectory)),
+        "palette_entropy": float(entropy),
+        "palette_hue_spread": float(hue_spread),
+        "palette_saturation_mean": float(np.mean(saturation_values)) if saturation_values else 0.0,
+        "palette_brightness_range": float(max(brightness_values) - min(brightness_values)) if brightness_values else 0.0,
+        "palette_transition_tension": float(transition_tension),
+        "palette_spatial_flow": float(spatial_flow),
+    }
+
+    for i in range(n_colors):
+        if i < len(trajectory):
+            c = trajectory[i]
+            out.update({
+                f"palette_hue_{i}": float(c["hue"]),
+                f"palette_saturation_{i}": float(c["saturation"]),
+                f"palette_brightness_{i}": float(c["brightness"]),
+                f"palette_weight_{i}": float(c["weight"]),
+                f"palette_x_{i}": float(c["x"]),
+                f"palette_y_{i}": float(c["y"]),
+            })
+        else:
+            out.update({
+                f"palette_hue_{i}": 0.0,
+                f"palette_saturation_{i}": 0.0,
+                f"palette_brightness_{i}": 0.0,
+                f"palette_weight_{i}": 0.0,
+                f"palette_x_{i}": 0.5,
+                f"palette_y_{i}": 0.5,
+            })
+    return out
+
 def analyze_fourier(luminance: np.ndarray, random_factor: float = 0.0, rng: Optional[np.random.Generator] = None) -> Dict[str, np.ndarray | float]:
     h, w = luminance.shape
     window_y = np.hanning(h) if h > 1 else np.ones(h)
@@ -344,6 +547,7 @@ def analyze_image(image: Image.Image, random_factor: float = 0.0, rng: Optional[
     symmetry = compute_symmetry_features(luminance)
     hsv = rgb_to_hsv_features(rgb, luminance)
     fourier = analyze_fourier(luminance, random_factor=random_factor, rng=rng)
+    palette = compute_color_palette_trajectory(rgb, luminance, n_colors=5)
 
     features = {
         "analysis_width": int(w),
@@ -367,6 +571,7 @@ def analyze_image(image: Image.Image, random_factor: float = 0.0, rng: Optional[
         "highlight_centroid_y": center_of_mass(highlight_weight)[1],
         **symmetry,
         **hsv,
+        **palette,
         **compute_gradient_orientation_features(luminance),
         **compute_quadrant_brightness(luminance),
         **compute_local_contrast_variance(luminance),
@@ -609,13 +814,125 @@ def build_scale_notes(root: int, scale_intervals: List[int], low: int, high: int
     return sorted(set(notes))
 
 
+def chord_from_scale_degree(scale_intervals: List[int], degree: int) -> List[int]:
+    n = max(1, len(scale_intervals))
+
+    def interval_at(step: int) -> int:
+        return int(scale_intervals[step % n] + 12 * (step // n))
+
+    return [interval_at(degree), interval_at(degree + 2), interval_at(degree + 4)]
+
+
 def choose_progression(scale_name: str, features: Dict[str, float]) -> List[List[int]]:
-    idx_seed = int((features["dominant_hue"] * 997.0 + features["periodic_peak_score"] * 113.0))
-    if "minor" in scale_name.lower() or scale_name == "Dorian":
-        return MINOR_PROGRESSIONS[idx_seed % len(MINOR_PROGRESSIONS)]
-    if "pentatonic" in scale_name.lower():
-        return PENTATONIC_PROGRESSIONS[idx_seed % len(PENTATONIC_PROGRESSIONS)]
-    return MAJOR_PROGRESSIONS[idx_seed % len(MAJOR_PROGRESSIONS)]
+    scale_intervals = SCALES.get(scale_name, SCALES["Major pentatonic"])
+    n_degrees = len(scale_intervals)
+    palette_count = int(round(float(features.get("palette_count", 0.0))))
+
+    # Fallback to the old compact progression bank if palette extraction is unavailable.
+    if palette_count <= 0:
+        idx_seed = int((features["dominant_hue"] * 997.0 + features["periodic_peak_score"] * 113.0))
+        if "minor" in scale_name.lower() or scale_name == "Dorian":
+            return MINOR_PROGRESSIONS[idx_seed % len(MINOR_PROGRESSIONS)]
+        if "pentatonic" in scale_name.lower():
+            return PENTATONIC_PROGRESSIONS[idx_seed % len(PENTATONIC_PROGRESSIONS)]
+        return MAJOR_PROGRESSIONS[idx_seed % len(MAJOR_PROGRESSIONS)]
+
+    dominant_hue = float(features.get("dominant_hue", 0.0))
+    palette_entropy = float(features.get("palette_entropy", 0.0))
+    palette_tension = float(features.get("palette_transition_tension", 0.0))
+    palette_hue_spread = float(features.get("palette_hue_spread", 0.0))
+    texture_entropy = float(features.get("texture_entropy", 0.0))
+    symmetry = float(features.get("symmetry_score", 0.5))
+    shadows = float(features.get("shadow_proportion", 0.0))
+    highlights = float(features.get("highlight_proportion", 0.0))
+    peak_score = float(features.get("periodic_peak_score", 0.0))
+
+    # More varied palettes generate longer harmonic phrases, while symmetric or
+    # highly periodic images keep a shorter loop feeling.
+    diversity_score = clamp(
+        0.38 * palette_entropy
+        + 0.26 * palette_tension
+        + 0.20 * palette_hue_spread
+        + 0.16 * texture_entropy
+        - 0.12 * symmetry
+        + 0.08 * (1.0 - peak_score),
+        0.0,
+        1.0,
+    )
+    progression_length = int(round(np.interp(diversity_score, [0.0, 1.0], [4.0, 8.0])))
+    progression_length = int(clamp(progression_length, 4, 8))
+
+    is_minor_like = "minor" in scale_name.lower() or scale_name == "Dorian"
+    if n_degrees >= 7:
+        if is_minor_like:
+            stable_pool = [0, 3, 5, 6]
+            bright_pool = [2, 5, 6]
+            dark_pool = [0, 3, 6, 4]
+            tension_pool = [1, 2, 4]
+            cadence_degree = 0 if symmetry > 0.58 else 6
+        else:
+            stable_pool = [0, 3, 4, 5]
+            bright_pool = [3, 4, 5]
+            dark_pool = [5, 1, 2]
+            tension_pool = [1, 2, 6]
+            cadence_degree = 0 if symmetry > 0.58 else 4
+    else:
+        stable_pool = [0, 2, 3]
+        bright_pool = [1, 2, 4]
+        dark_pool = [0, 3, 4]
+        tension_pool = [1, 4, 2]
+        cadence_degree = 0 if symmetry > 0.58 else 2
+
+    # Start from the tonal center for a clear reference, then let the ordered
+    # color palette define the harmonic trajectory.
+    degrees: List[int] = [0]
+    previous_hue = float(features.get("palette_hue_0", dominant_hue))
+    previous_brightness = float(features.get("palette_brightness_0", features.get("mean_brightness", 0.5)))
+
+    for step in range(1, progression_length):
+        pidx = (step - 1) % max(1, palette_count)
+        hue = float(features.get(f"palette_hue_{pidx}", dominant_hue))
+        sat = float(features.get(f"palette_saturation_{pidx}", features.get("mean_saturation", 0.0)))
+        lum = float(features.get(f"palette_brightness_{pidx}", features.get("mean_brightness", 0.5)))
+        weight = float(features.get(f"palette_weight_{pidx}", 1.0 / max(1, palette_count)))
+
+        rel_hue = (hue - dominant_hue) % 1.0
+        hue_bin = int(round(rel_hue * max(1, n_degrees - 1)))
+        hue_jump = circular_hue_distance(previous_hue, hue)
+        lum_jump = abs(lum - previous_brightness)
+        local_tension = clamp(0.55 * hue_jump * (0.25 + sat) + 0.45 * lum_jump + 0.20 * palette_tension, 0.0, 1.0)
+
+        if shadows > 0.24 and lum < 0.46:
+            pool = dark_pool + tension_pool + stable_pool
+        elif highlights > 0.10 and lum > 0.56:
+            pool = bright_pool + stable_pool + tension_pool
+        elif local_tension > 0.42 or sat > 0.55:
+            pool = tension_pool + bright_pool + stable_pool
+        else:
+            pool = stable_pool + dark_pool + tension_pool
+
+        pool = [d % n_degrees for d in pool]
+        index = (hue_bin + int(round(4.0 * sat)) + int(round(5.0 * weight)) + step) % len(pool)
+        degree = pool[index]
+
+        # Avoid static repetitions unless the image is intentionally very stable.
+        if len(degrees) >= 1 and degree == degrees[-1] and diversity_score > 0.22:
+            degree = pool[(index + 1 + int(round(2.0 * local_tension))) % len(pool)]
+
+        degrees.append(int(degree % n_degrees))
+        previous_hue = hue
+        previous_brightness = lum
+
+    # The last chord determines whether the loop feels resolved or suspended.
+    if progression_length >= 4:
+        if palette_tension < 0.28 and symmetry > 0.52:
+            degrees[-1] = 0
+        elif highlights > shadows and palette_hue_spread > 0.28:
+            degrees[-1] = bright_pool[(int(round(10.0 * palette_hue_spread)) + progression_length) % len(bright_pool)] % n_degrees
+        else:
+            degrees[-1] = cadence_degree % n_degrees
+
+    return [chord_from_scale_degree(scale_intervals, degree) for degree in degrees]
 
 
 def time_slice_statistics(luminance: np.ndarray, n_slices: int) -> List[Dict[str, float]]:
@@ -652,6 +969,11 @@ def generate_composition(
     manual_chord_layer: str,
     musicality: str,
     manual_tempo_bpm: Optional[float] = None,
+    main_gain_db: float = 0.0,
+    texture_gain_db: float = 0.0,
+    bass_gain_db: float = 0.0,
+    pad_gain_db: float = 0.0,
+    chord_gain_db: float = 0.0,
 ) -> Tuple[List[NoteEvent], CompositionInfo]:
     features = analysis["features"]  # type: ignore[assignment]
     maps = analysis["maps"]  # type: ignore[assignment]
@@ -741,7 +1063,7 @@ def generate_composition(
     shadow_pan = np.interp(float(features["shadow_centroid_x"]), [0.0, 1.0], [-0.35, 0.35])
     highlight_pan = np.interp(float(features["highlight_centroid_x"]), [0.0, 1.0], [-0.65, 0.65])
     chord_velocity = clamp(0.28 + 0.42 * brightness + 0.18 * low_freq, 0.22, 0.78)
-    pad_velocity = clamp(0.18 + 0.42 * low_freq + 0.10 * (1.0 - high_freq), 0.14, 0.62)
+    pad_velocity = clamp(0.07 + 0.18 * low_freq + 0.04 * (1.0 - high_freq), 0.04, 0.28)
     bass_velocity = clamp(0.30 + 0.55 * shadow + 0.25 * low_freq, 0.22, 0.86)
     melody_velocity_base = clamp(0.30 + 0.30 * lum_cdf_spread + 0.20 * contrast + 0.15 * saturation + 0.08 * brightness_skew, 0.28, 0.90)
 
@@ -764,7 +1086,7 @@ def generate_composition(
 
         if pad_inst != "none":
             for n in chord_notes:
-                events.append(NoteEvent(start, 4.05 * beat, int(clamp(n + 12, 36, 88)), clamp(pad_velocity * section_dyn, 0.10, 0.78), pad_inst, 0.15 * math.sin(bar * 0.7), "pad"))
+                events.append(NoteEvent(start, 4.05 * beat, int(clamp(n + 12, 36, 88)), clamp(pad_velocity * section_dyn, 0.035, 0.32), pad_inst, 0.15 * math.sin(bar * 0.7), "pad"))
 
         if chord_inst != "none":
             chord_hits = 1 if musicality == "Scientific" and high_freq < 0.22 else 2
@@ -889,6 +1211,17 @@ def generate_composition(
             pan = 0.55 * math.sin(j * 0.91 + float(features["diagonal_frequency_energy"]) * 2.0)
             events.append(NoteEvent(t, 0.08 * beat, midi, vel, "texture_tick", pan, "texture"))
 
+    layer_gain_db = {
+        "main": float(main_gain_db),
+        "texture": float(texture_gain_db),
+        "bass": float(bass_gain_db),
+        "pad": float(pad_gain_db),
+        "chord": float(chord_gain_db),
+    }
+    for ev in events:
+        gain_linear = 10.0 ** (layer_gain_db.get(ev.layer, 0.0) / 20.0)
+        ev.velocity = clamp(ev.velocity * gain_linear, 0.0, 1.0)
+
     mapping_summary = {
         "Brightness": "controls the global pitch register and melody velocity",
         "Shadows": "reinforce cello/bass notes and low-frequency warmth",
@@ -900,6 +1233,7 @@ def generate_composition(
         "Fourier peak score": "controls repetition and periodic rhythmic motifs",
         "Image symmetry": "sets the default variation strength",
         "Texture entropy": "sets the default composition complexity",
+        "Color palette trajectory": "drives chord progression diversity from dominant colors and their left-to-right order",
         "Random factor": "adds controlled white perturbation in the image and Fourier domains",
     }
     info = CompositionInfo(tempo, bars, actual_duration, key_name, scale_name, main_inst, texture_inst, bass_inst, pad_inst, chord_inst, describe_mood(features), mapping_summary)
@@ -1333,6 +1667,11 @@ def make_parameter_signature(
     manual_pad_layer: str,
     manual_chord_layer: str,
     manual_tempo_bpm: Optional[float],
+    main_gain_db: float = 0.0,
+    texture_gain_db: float = 0.0,
+    bass_gain_db: float = 0.0,
+    pad_gain_db: float = 0.0,
+    chord_gain_db: float = 0.0,
 ) -> str:
     payload = {
         "number_of_bars": int(number_of_bars),
@@ -1348,6 +1687,11 @@ def make_parameter_signature(
         "manual_bass_layer": manual_bass_layer if instrument_mode == "Manual" else None,
         "manual_pad_layer": manual_pad_layer if instrument_mode == "Manual" else None,
         "manual_chord_layer": manual_chord_layer if instrument_mode == "Manual" else None,
+        "main_gain_db": round(float(main_gain_db), 2) if instrument_mode == "Manual" else None,
+        "texture_gain_db": round(float(texture_gain_db), 2) if instrument_mode == "Manual" else None,
+        "bass_gain_db": round(float(bass_gain_db), 2) if instrument_mode == "Manual" else None,
+        "pad_gain_db": round(float(pad_gain_db), 2) if instrument_mode == "Manual" else None,
+        "chord_gain_db": round(float(chord_gain_db), 2) if instrument_mode == "Manual" else None,
         "sample_rate": DEFAULT_SAMPLE_RATE,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
@@ -1479,23 +1823,33 @@ with app_tab:
             manual_bass_layer = _def_bass
             manual_pad_layer = _def_pad
             manual_chord_layer = _def_chord
+            main_gain_db = 0.0
+            texture_gain_db = -2.0
+            bass_gain_db = 0.0
+            pad_gain_db = -8.0
+            chord_gain_db = -3.0
             if instrument_mode == "Manual":
                 row1_c1, row1_c2, row1_c3 = st.columns(3, gap="medium")
                 with row1_c1:
                     manual_main_layer = st.selectbox("Main layer", INSTRUMENT_CHOICES_WITH_NONE, index=_safe_idx(INSTRUMENT_CHOICES_WITH_NONE, _def_main, "Soft piano"), disabled=not controls_active)
+                    main_gain_db = st.slider("Main gain (dB)", -24.0, 12.0, 0.0, 0.5, disabled=not controls_active)
                 with row1_c2:
                     manual_texture_layer = st.selectbox("Texture layer", INSTRUMENT_CHOICES_WITH_NONE, index=_safe_idx(INSTRUMENT_CHOICES_WITH_NONE, _def_texture, "Harp"), disabled=not controls_active)
+                    texture_gain_db = st.slider("Texture gain (dB)", -24.0, 12.0, -2.0, 0.5, disabled=not controls_active)
                 with row1_c3:
                     manual_bass_layer = st.selectbox("Bass layer", INSTRUMENT_CHOICES_WITH_NONE, index=_safe_idx(INSTRUMENT_CHOICES_WITH_NONE, _def_bass, "Cello-like bass"), disabled=not controls_active)
+                    bass_gain_db = st.slider("Bass gain (dB)", -24.0, 12.0, 0.0, 0.5, disabled=not controls_active)
                 row2_c1, row2_c2, _ = st.columns([1, 1, 1], gap="medium")
                 with row2_c1:
                     manual_pad_layer = st.selectbox("Pad layer", INSTRUMENT_CHOICES_WITH_NONE, index=_safe_idx(INSTRUMENT_CHOICES_WITH_NONE, _def_pad, "Warm pad"), disabled=not controls_active)
+                    pad_gain_db = st.slider("Pad gain (dB)", -24.0, 12.0, -8.0, 0.5, disabled=not controls_active)
                 with row2_c2:
                     manual_chord_layer = st.selectbox("Chord layer", INSTRUMENT_CHOICES_WITH_NONE, index=_safe_idx(INSTRUMENT_CHOICES_WITH_NONE, _def_chord, "Soft piano"), disabled=not controls_active)
+                    chord_gain_db = st.slider("Chord gain (dB)", -24.0, 12.0, -3.0, 0.5, disabled=not controls_active)
 
         run_clicked = st.button("Run", type="primary", width="stretch")
 
-    current_parameter_signature = make_parameter_signature(number_of_bars, complexity, variation_strength, random_factor, musicality, requested_scale, instrument_mode, manual_main_layer, manual_texture_layer, manual_bass_layer, manual_pad_layer, manual_chord_layer, manual_tempo_bpm)
+    current_parameter_signature = make_parameter_signature(number_of_bars, complexity, variation_strength, random_factor, musicality, requested_scale, instrument_mode, manual_main_layer, manual_texture_layer, manual_bass_layer, manual_pad_layer, manual_chord_layer, manual_tempo_bpm, main_gain_db, texture_gain_db, bass_gain_db, pad_gain_db, chord_gain_db)
     should_rerun_to_activate_controls = False
 
     if run_clicked:
@@ -1546,6 +1900,11 @@ with app_tab:
                         effective_manual_chord_layer = "Soft piano"
                         effective_musicality = "Scientific"
                         effective_manual_tempo_bpm = None
+                        effective_main_gain_db = 0.0
+                        effective_texture_gain_db = 0.0
+                        effective_bass_gain_db = 0.0
+                        effective_pad_gain_db = 0.0
+                        effective_chord_gain_db = 0.0
                         original_analysis = default_analysis
                         analysis = default_analysis
                     else:
@@ -1562,6 +1921,18 @@ with app_tab:
                         effective_manual_chord_layer = manual_chord_layer
                         effective_musicality = musicality
                         effective_manual_tempo_bpm = manual_tempo_bpm
+                        if effective_instrument_mode == "Manual":
+                            effective_main_gain_db = float(main_gain_db)
+                            effective_texture_gain_db = float(texture_gain_db)
+                            effective_bass_gain_db = float(bass_gain_db)
+                            effective_pad_gain_db = float(pad_gain_db)
+                            effective_chord_gain_db = float(chord_gain_db)
+                        else:
+                            effective_main_gain_db = 0.0
+                            effective_texture_gain_db = 0.0
+                            effective_bass_gain_db = 0.0
+                            effective_pad_gain_db = 0.0
+                            effective_chord_gain_db = 0.0
                         cached_photo_analysis = st.session_state.get("photo_analysis_cache")
                         if isinstance(cached_photo_analysis, dict) and cached_photo_analysis.get("image_id") == uploaded_hash:
                             original_analysis = cached_photo_analysis["analysis"]
@@ -1573,12 +1944,12 @@ with app_tab:
                             }
                         analysis = analyze_image(uploaded_image, random_factor=float(effective_random_factor), rng=np.random.default_rng())
 
-                    current_parameter_signature = make_parameter_signature(effective_number_of_bars, effective_complexity, effective_variation_strength, effective_random_factor, effective_musicality, effective_requested_scale, effective_instrument_mode, effective_manual_main_layer, effective_manual_texture_layer, effective_manual_bass_layer, effective_manual_pad_layer, effective_manual_chord_layer, effective_manual_tempo_bpm)
+                    current_parameter_signature = make_parameter_signature(effective_number_of_bars, effective_complexity, effective_variation_strength, effective_random_factor, effective_musicality, effective_requested_scale, effective_instrument_mode, effective_manual_main_layer, effective_manual_texture_layer, effective_manual_bass_layer, effective_manual_pad_layer, effective_manual_chord_layer, effective_manual_tempo_bpm, effective_main_gain_db, effective_texture_gain_db, effective_bass_gain_db, effective_pad_gain_db, effective_chord_gain_db)
                     original_features: Dict[str, float] = original_analysis["features"]  # type: ignore[assignment]
                     original_maps: Dict[str, np.ndarray] = original_analysis["maps"]  # type: ignore[assignment]
                     features: Dict[str, float] = analysis["features"]  # type: ignore[assignment]
                     maps: Dict[str, np.ndarray] = analysis["maps"]  # type: ignore[assignment]
-                    events, info = generate_composition(analysis, effective_number_of_bars, effective_complexity, effective_variation_strength, effective_requested_scale, effective_instrument_mode, effective_manual_main_layer, effective_manual_texture_layer, effective_manual_bass_layer, effective_manual_pad_layer, effective_manual_chord_layer, effective_musicality, effective_manual_tempo_bpm)
+                    events, info = generate_composition(analysis, effective_number_of_bars, effective_complexity, effective_variation_strength, effective_requested_scale, effective_instrument_mode, effective_manual_main_layer, effective_manual_texture_layer, effective_manual_bass_layer, effective_manual_pad_layer, effective_manual_chord_layer, effective_musicality, effective_manual_tempo_bpm, effective_main_gain_db, effective_texture_gain_db, effective_bass_gain_db, effective_pad_gain_db, effective_chord_gain_db)
                     audio = render_events(events, info.duration, DEFAULT_SAMPLE_RATE)
                     wav_bytes = audio_to_wav_bytes(audio, DEFAULT_SAMPLE_RATE)
                     midi_bytes = midi_bytes_from_events(events, info.tempo)
@@ -1611,6 +1982,11 @@ with app_tab:
                         "manual_tempo_bpm": float(effective_manual_tempo_bpm) if effective_musicality == "Manual" and effective_manual_tempo_bpm is not None else None,
                         "scale": effective_requested_scale,
                         "instrument_mode": effective_instrument_mode,
+                        "main_gain_db": float(effective_main_gain_db),
+                        "texture_gain_db": float(effective_texture_gain_db),
+                        "bass_gain_db": float(effective_bass_gain_db),
+                        "pad_gain_db": float(effective_pad_gain_db),
+                        "chord_gain_db": float(effective_chord_gain_db),
                         "sample_rate": DEFAULT_SAMPLE_RATE,
                     },
                 }
@@ -1647,13 +2023,10 @@ with app_tab:
             else:
                 maps = result.get("display_maps", result["maps"])
                 features = result.get("display_features", result["features"])
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.image(plot_map(maps["luminance"], "Luminance map"), width="stretch")
-                    st.image(plot_map(maps["edge_map"], "Edge strength map"), width="stretch")
-                with m2:
-                    st.image(plot_map(maps["fft_log_magnitude"], "2D Fourier log-magnitude"), width="stretch")
-                    st.image(plot_map(maps["shadow_highlight_map"], "Highlights in red, shadows in blue", cmap=None), width="stretch")
+                st.image(plot_map(maps["luminance"], "Luminance map"), width="stretch")
+                st.image(plot_map(maps["edge_map"], "Edge strength map"), width="stretch")
+                st.image(plot_map(maps["fft_log_magnitude"], "2D Fourier log-magnitude"), width="stretch")
+                st.image(plot_map(maps["shadow_highlight_map"], "Highlights in red, shadows in blue", cmap=None), width="stretch")
                 st.markdown("##### Photo analysis")
                 a1, a2, a3 = st.columns(3)
                 a1.metric("Brightness", f"{features['mean_brightness']:.3f}")
@@ -1715,7 +2088,6 @@ with app_tab:
                     "Chord layer Fourier": render_events(events, info.duration, result_sr, layer="chord"),
                 }
                 audio_plots = [
-                    ("Spectrogram", plot_spectrogram(audio, result_sr, "Spectrogram")),
                     ("Full Fourier magnitude", plot_frequency_domain(audio, result_sr, "Full Fourier magnitude")),
                     ("Waveform", plot_waveform(audio, result_sr, "Waveform")),
                     ("Main layer Fourier", plot_frequency_domain(layer_audio["Main layer Fourier"], result_sr, "Main layer Fourier")),
@@ -1724,10 +2096,7 @@ with app_tab:
                     ("Pad layer Fourier", plot_frequency_domain(layer_audio["Pad layer Fourier"], result_sr, "Pad layer Fourier")),
                     ("Chord layer Fourier", plot_frequency_domain(layer_audio["Chord layer Fourier"], result_sr, "Chord layer Fourier")),
                 ]
-                for row_start in range(0, len(audio_plots), 2):
-                    row_cols = st.columns(2, gap="medium")
-                    for col, (_, plot_bytes) in zip(row_cols, audio_plots[row_start:row_start + 2]):
-                        with col:
-                            st.image(plot_bytes, width="stretch")
+                for _, plot_bytes in audio_plots:
+                    st.image(plot_bytes, width="stretch")
             if mp3_bytes is None:
                 st.caption(result.get("mp3_message", "MP3 export is unavailable on this environment."))
