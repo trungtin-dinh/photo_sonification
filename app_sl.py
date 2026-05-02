@@ -10,6 +10,7 @@ import struct
 import subprocess
 import tempfile
 import wave
+import urllib.request
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -25,6 +26,31 @@ DEFAULT_SAMPLE_RATE = 44100
 # This affects luminance, edges, Fourier descriptors, palette extraction, and displayed maps.
 MAX_ANALYSIS_SIDE = None
 MAX_RENDER_SECONDS = 120.0
+
+DEFAULT_IMAGE_URL = "https://media.mutualart.com/Images/2016_04/28/19/194441798/8a90ad07-2349-43df-825f-c3ecacc072e2_570.Jpeg"
+
+DEFAULT_IMAGE_SOURCE_PAGE = "https://www.mutualart.com/Artwork/Night-lights/171ACA7174BEDBD6"
+
+DEFAULT_IMAGE_CAPTION = (
+    "Default sample image: Félix De Boeck, Night lights, 1954. "
+    "Source image: MutualArt. This image is preloaded only to let users test the app; "
+    "it is not presented as open-source/licensed material. You can upload your own photo "
+    "to replace this default image."
+)
+
+DEFAULT_IMAGE_NAME = "Félix De Boeck, Night lights, 1954"
+
+
+def load_image_bytes_from_url(url: str, timeout: float = 20.0) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; Photo-Sonification-Lab/1.0)",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -1697,6 +1723,101 @@ def make_parameter_signature(
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+
+def read_markdown_document(filename: str) -> str:
+    base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+    candidates = [
+        os.path.join(base_dir, filename),
+        os.path.join(os.getcwd(), filename),
+        os.path.join(os.path.dirname(os.getcwd()), filename),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+    return ""
+
+
+def split_markdown_sections(markdown_text: str) -> List[Tuple[str, str]]:
+    lines = markdown_text.splitlines()
+    sections: List[Tuple[str, str]] = []
+    current_title = "Documentation"
+    current_lines: List[str] = []
+
+    for line in lines:
+        if line.startswith("## "):
+            if current_lines:
+                body = "\n".join(current_lines).strip()
+                if body:
+                    sections.append((current_title, body))
+            current_title = line[3:].strip() or "Documentation"
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines:
+        body = "\n".join(current_lines).strip()
+        if body:
+            sections.append((current_title, body))
+
+    cleaned_sections: List[Tuple[str, str]] = []
+    for title, body in sections:
+        normalized_title = title.lower().strip()
+        if normalized_title in {"table of contents", "table des matières", "table des matieres"}:
+            continue
+        cleaned_sections.append((title, body))
+    return cleaned_sections
+
+
+def set_doc_section(state_key: str, section_index: int) -> None:
+    st.session_state[state_key] = int(section_index)
+
+
+def format_documentation_section(markdown_text: str) -> str:
+    lines = markdown_text.splitlines()
+    if lines and lines[0].startswith("## "):
+        lines[0] = "# " + lines[0][3:]
+    while lines and lines[0].strip() == "---":
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def render_documentation_tab(filename: str, state_key: str, missing_label: str) -> None:
+    markdown_text = read_markdown_document(filename)
+    if not markdown_text.strip():
+        st.warning(missing_label)
+        return
+
+    sections = split_markdown_sections(markdown_text)
+    if not sections:
+        st.markdown(markdown_text)
+        return
+
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 0
+
+    selected_index = int(st.session_state.get(state_key, 0))
+    selected_index = max(0, min(selected_index, len(sections) - 1))
+    st.session_state[state_key] = selected_index
+
+    nav_col, content_col = st.columns([1.05, 2.05], gap="medium")
+    with nav_col:
+        for idx, (title, _) in enumerate(sections):
+            st.button(
+                title,
+                key=f"{state_key}_{idx}",
+                type="primary" if idx == selected_index else "secondary",
+                width="stretch",
+                on_click=set_doc_section,
+                args=(state_key, idx),
+            )
+
+    selected_index = int(st.session_state.get(state_key, selected_index))
+    selected_index = max(0, min(selected_index, len(sections) - 1))
+    with content_col:
+        st.markdown(format_documentation_section(sections[selected_index][1]))
+
+
 st.set_page_config(page_title=None, page_icon=None, layout="wide")
 st.markdown(
     """
@@ -1706,12 +1827,14 @@ st.markdown(
     .small-note { color: #666; font-size: 0.92rem; }
     .column-title { font-size: 1.12rem; font-weight: 650; margin-bottom: 0.3rem; }
     div[data-testid="stExpander"] details { border-radius: 0.45rem; }
+    div[data-testid="stButton"] > button { border-radius: 0.45rem; min-height: 2.35rem; white-space: normal; }
+    div[data-testid="stButton"] > button[kind="primary"] { font-weight: 650; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-app_tab = st.tabs(["Application"])[0]
+app_tab, doc_fr_tab, doc_en_tab = st.tabs(["App", "Documentation FR", "Documentation EN"])
 if "generation_result" not in st.session_state:
     st.session_state["generation_result"] = None
 if "generation_message" not in st.session_state:
@@ -1729,6 +1852,8 @@ with app_tab:
     uploaded_image: Optional[Image.Image] = None
     uploaded_hash: Optional[str] = None
     upload_error: Optional[str] = None
+    input_image_name = DEFAULT_IMAGE_NAME
+    input_is_default_image = False
 
     with input_col:
         st.markdown("<div class='column-title'>Input photo</div>", unsafe_allow_html=True)
@@ -1738,6 +1863,7 @@ with app_tab:
                 uploaded_bytes = uploaded.getvalue()
                 uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest()
                 uploaded_image = Image.open(io.BytesIO(uploaded_bytes)).convert("RGB")
+                input_image_name = uploaded.name
                 st.image(uploaded_image, width="stretch")
             except Exception as exc:
                 uploaded_image = None
@@ -1746,7 +1872,19 @@ with app_tab:
                 upload_error = str(exc)
                 st.error(f"Could not read this image: {exc}")
         else:
-            st.info("Load a photo here.")
+            try:
+                uploaded_bytes = load_image_bytes_from_url(DEFAULT_IMAGE_URL)
+                uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest()
+                uploaded_image = Image.open(io.BytesIO(uploaded_bytes)).convert("RGB")
+                input_is_default_image = True
+                st.image(uploaded_image, width="stretch")
+                st.caption(DEFAULT_IMAGE_CAPTION)
+            except Exception as exc:
+                uploaded_image = None
+                uploaded_bytes = None
+                uploaded_hash = None
+                upload_error = str(exc)
+                st.info("The default test image could not be loaded from its source URL. Please load a photo here.")
 
     parameter_defaults = st.session_state.get("parameter_defaults")
     controls_active = uploaded_image is not None and uploaded_hash is not None and isinstance(parameter_defaults, dict) and parameter_defaults.get("image_id") == uploaded_hash
@@ -1956,7 +2094,9 @@ with app_tab:
                     mp3_bytes, mp3_message = audio_to_mp3_bytes(audio, DEFAULT_SAMPLE_RATE)
                 st.session_state["generation_result"] = {
                     "image_id": uploaded_hash,
-                    "image_name": uploaded.name,
+                    "image_name": input_image_name,
+                    "image_is_default": bool(input_is_default_image),
+                    "image_source_page": DEFAULT_IMAGE_SOURCE_PAGE if input_is_default_image else None,
                     "image_bytes": uploaded_bytes,
                     "parameter_signature": current_parameter_signature,
                     "analysis": analysis,
@@ -2100,3 +2240,17 @@ with app_tab:
                     st.image(plot_bytes, width="stretch")
             if mp3_bytes is None:
                 st.caption(result.get("mp3_message", "MP3 export is unavailable on this environment."))
+
+with doc_fr_tab:
+    render_documentation_tab(
+        "documentation_fr.md",
+        "documentation_fr_section",
+        "Le fichier `documentation_fr.md` est introuvable à côté de `app_sl.py`.",
+    )
+
+with doc_en_tab:
+    render_documentation_tab(
+        "documentation_en.md",
+        "documentation_en_section",
+        "The file `documentation_en.md` could not be found next to `app_sl.py`.",
+    )
