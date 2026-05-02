@@ -1911,7 +1911,7 @@ with app_tab:
         variation_default, complexity_default = 0.55, 0.72
 
     with analysis_col:
-        with st.expander("Audio output parameters", expanded=True):
+        with st.expander("Audio output parameters", expanded=False):
             if not controls_active:
                 st.info("Load a photo, then click Run to analyze it and activate the parameters." if uploaded_image is None else "Click Run to analyze the photo and activate the parameters.")
             slider_col_1, slider_col_2 = st.columns([1.0, 1.0], gap="large")
@@ -2157,7 +2157,7 @@ with app_tab:
         result = None
 
     with analysis_col:
-        with st.expander("Photo analysis", expanded=True):
+        with st.expander("Photo analysis", expanded=False):
             if result is None:
                 st.info("Run the app once to display the photo-derived maps and analysis metrics.")
             else:
@@ -2192,7 +2192,7 @@ with app_tab:
             st.info("No generated audio yet.")
             st.download_button("Download MP3 file", data=b"", file_name="photo_sonification.mp3", mime="audio/mpeg", disabled=True, width="stretch")
             st.download_button("Download MIDI file", data=b"", file_name="photo_sonification_score.mid", mime="audio/midi", disabled=True, width="stretch")
-            with st.expander("Audio analysis", expanded=True):
+            with st.expander("Audio analysis", expanded=False):
                 st.info("Run the app once to display the audio plots.")
         else:
             info: CompositionInfo = result["info"]
@@ -2216,7 +2216,7 @@ with app_tab:
                 st.warning("Some parameters changed after the last generation. Click Run to update the output.")
             st.download_button("Download MP3 file", data=ensure_download_bytes(mp3_bytes), file_name="photo_sonification.mp3", mime="audio/mpeg", disabled=mp3_bytes is None, width="stretch")
             st.download_button("Download MIDI file", data=ensure_download_bytes(midi_bytes), file_name="photo_sonification_score.mid", mime="audio/midi", width="stretch")
-            with st.expander("Audio analysis", expanded=True):
+            with st.expander("Audio analysis", expanded=False):
                 audio: np.ndarray = result["audio"]
                 events: List[NoteEvent] = result["events"]
                 result_sr = int(result["sample_rate"])
