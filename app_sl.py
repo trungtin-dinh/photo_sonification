@@ -65,7 +65,7 @@ PORTFOLIO_LINKS = [
         "platform": "LinkedIn",
         "label": "Trung-Tin Dinh",
         "url": "https://www.linkedin.com/in/trung-tin-dinh/",
-        "icon_url": "https://cdn.simpleicons.org/linkedin/0A66C2",
+        "icon_url": "https://upload.wikimedia.org/wikipedia/commons/8/81/LinkedIn_icon.svg",
     },
     {
         "platform": "Hugging Face",
@@ -83,13 +83,13 @@ PORTFOLIO_LINKS = [
         "platform": "CV FR",
         "label": "CV FR",
         "url": "http://e.pc.cd/t2ly6alK",
-        "icon_url": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/icons/file-earmark-pdf.svg",
+        "icon_url": "https://upload.wikimedia.org/wikipedia/commons/8/87/PDF_file_icon.svg",        
     },
     {
         "platform": "CV EN",
         "label": "CV EN",
         "url": "http://e.pc.cd/KjMotalK",
-        "icon_url": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/icons/file-earmark-pdf.svg",
+        "icon_url": "https://upload.wikimedia.org/wikipedia/commons/8/87/PDF_file_icon.svg",        
     },
 ]
 
