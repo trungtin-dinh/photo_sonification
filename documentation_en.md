@@ -1,865 +1,904 @@
 ## Table of Contents
 
-1. [Overview: From Photo to Musical Composition](#1-overview-from-photo-to-musical-composition)
-2. [Visual-to-Musical Mapping at a Glance](#2-visual-to-musical-mapping-at-a-glance)
-3. [Image Representation and Luminance Analysis](#3-image-representation-and-luminance-analysis)
-4. [Spatial Descriptors: Edges, Texture Entropy and Symmetry](#4-spatial-descriptors-edges-texture-entropy-and-symmetry)
-5. [Chromatic and Color Features](#5-chromatic-and-color-features)
-6. [Visual Saliency Estimation](#6-visual-saliency-estimation)
-7. [Two-Dimensional Fourier Analysis](#7-two-dimensional-fourier-analysis)
-8. [Automatic Musical Parameters](#8-automatic-musical-parameters)
-9. [Chord Progression and Harmonic Structure](#9-chord-progression-and-harmonic-structure)
-10. [Melody and Layered Composition](#10-melody-and-layered-composition)
-11. [Automatic and Manual Instrument Selection](#11-automatic-and-manual-instrument-selection)
-12. [Additive Synthesis and ADSR Envelopes](#12-additive-synthesis-and-adsr-envelopes)
-13. [Saliency-Driven Solo Layer](#13-saliency-driven-solo-layer)
-14. [Stereo Rendering and Equal-Power Panning](#14-stereo-rendering-and-equal-power-panning)
-15. [Master Bus Processing](#15-master-bus-processing)
-16. [MIDI Export](#16-midi-export)
-17. [Random Factor and Controlled Perturbations](#17-random-factor-and-controlled-perturbations)
-18. [Audio Analysis Plots](#18-audio-analysis-plots)
-19. [Limitations and Interpretation](#19-limitations-and-interpretation)
+1. [Overview](#1-overview)
+2. [What the App Does](#2-what-the-app-does)
+3. [Pipeline at a Glance](#3-pipeline-at-a-glance)
+4. [Notation](#4-notation)
+5. [Image Analysis](#5-image-analysis)
+6. [Fourier Analysis of the Photo](#6-fourier-analysis-of-the-photo)
+7. [Visual Saliency](#7-visual-saliency)
+8. [From Visual Features to Musical Decisions](#8-from-visual-features-to-musical-decisions)
+9. [Automatic Structure: Bars, Complexity and Variation](#9-automatic-structure-bars-complexity-and-variation)
+10. [Tonality, Scale and Tempo](#10-tonality-scale-and-tempo)
+11. [Harmony and Chord Progression](#11-harmony-and-chord-progression)
+12. [Melody, Texture, Bass, Pad, Chord and Solo Layers](#12-melody-texture-bass-pad-chord-and-solo-layers)
+13. [Instrument Selection](#13-instrument-selection)
+14. [Audio Rendering and Synthesis](#14-audio-rendering-and-synthesis)
+15. [Master Bus, Exports and Audio Analysis](#15-master-bus-exports-and-audio-analysis)
+16. [Random Factor](#16-random-factor)
+17. [Parameter Reference](#17-parameter-reference)
+18. [Limitations](#18-limitations)
 
 ---
 
-## 1. Overview: From Photo to Musical Composition
+## 1. Overview
 
-This application converts a still image into a short multi-layer musical composition. No trained model is used at any stage. The entire pipeline consists of classical signal-processing and image-processing operations whose outputs are mapped deterministically to musical decisions.
+Photo Sonification Lab converts a still image into a short musical composition. The app does not use a trained neural network and it does not try to recognize objects in the image. Instead, it measures visual quantities such as brightness, contrast, edge density, color, spatial frequency content and saliency, then maps them to musical quantities such as key, scale, tempo, note density, instrument choice, stereo position and layer balance.
 
-The core idea is **sonification**: the assignment of measurable physical or perceptual attributes of a non-audio signal to audible parameters. Here the source signal is a photograph, and the target is a structured musical piece with melody, harmony, rhythm and timbre.
-
-The processing pipeline is:
+The idea is simple: a photo is treated as a signal. The app analyses that signal, extracts a feature vector, converts this feature vector into a list of musical note events, then renders those events as audio and MIDI.
 
 $$
 \text{photo}
-\;\xrightarrow{\text{analysis}}\;
+\;\xrightarrow{\text{image analysis}}\;
 \mathbf{f}
-\;\xrightarrow{\text{mapping}}\;
-\{\text{events}\}
+\;\xrightarrow{\text{musical mapping}}\;
+\{\text{note events}\}
 \;\xrightarrow{\text{synthesis}}\;
 \text{audio} + \text{MIDI}
 $$
 
-where $\mathbf{f}$ is a vector of scalar visual descriptors and $\{\text{events}\}$ is an ordered list of note events, each carrying a start time, duration, MIDI pitch, velocity, instrument identifier, stereo pan value and layer label.
-
-The mapping is fully deterministic when the random factor is set to zero: identical input and identical parameters always produce identical output. This reproducibility makes the system interpretable and verifiable — a deliberate contrast with generative AI audio systems whose internal state is not accessible.
-
-The composition is organized into six layers:
-
-| Layer | Role |
-|---|---|
-| Main | principal melodic contour derived from luminance slices |
-| Texture | arpeggios, highlight accents and rhythmic micro-events |
-| Bass | low-frequency harmonic foundation |
-| Pad | long atmospheric sustained tones |
-| Chord | harmonic support and chord hits |
-| Solo | accent melody driven by visual saliency (GeneralUser GS mode only) |
+The output is not meant to be the unique correct music for a photo. It is one explicit and reproducible mapping from visual structure to musical structure. With Random factor set to 0, the same image and the same parameters always produce the same composition.
 
 ---
 
-## 2. Visual-to-Musical Mapping at a Glance
+## 2. What the App Does
 
-Before entering the mathematical detail of each module, this section provides a consolidated reading of the full pipeline. Every musical decision in the composition traces back to a specific, named visual quantity. The table below is the complete map.
+From a user point of view, the app follows this order.
 
-| Visual descriptor | How it is measured | What it controls in the music |
+First, the image is loaded and resized for analysis. The app keeps the visual content but limits the longest analysis side so that Fourier analysis, saliency extraction and feature computation remain fast enough for an online app.
+
+Second, the app computes several maps from the photo:
+
+| Map | What it shows | Why it matters musically |
 |---|---|---|
-| **Mean luminance** (brightness) | spatial mean of the perceptual luminance field $Y$ | melodic register (dark → low octave, bright → high octave); bass weight; mood label |
-| **Luminance contrast** | standard deviation of $Y$ | tempo (Scientific/Balanced modes); chord hit velocity; melodic velocity spread |
-| **Shadow proportion** | fraction of pixels below an adaptive low-percentile threshold | bass velocity; scale tendency toward minor/Dorian; pad weight; tempo reduction |
-| **Highlight proportion** | fraction of pixels above an adaptive high-percentile threshold | arpeggio frequency; bright-timbre affinity (bells, celesta); chord activity |
-| **Edge density** | fraction of gradient-magnitude pixels above an adaptive 75th-percentile threshold | tempo (dominant term in Scientific mode); attack sharpness; rhythmic activity |
-| **Texture entropy** | normalized Shannon entropy of the edge-magnitude histogram | composition complexity (note density); bar-count default; instrument brightness affinity |
-| **Symmetry score** | mean absolute difference between $Y$ and its left-right / top-bottom mirrors | variation strength default (symmetric → stable loop; asymmetric → strong evolution) |
-| **Dominant hue** | circular weighted mean of the hue angle, weighted by saturation and luminance | tonal key (mapped to 12 chromatic pitch classes) |
-| **Warmth** | mean red-minus-blue channel difference | scale preference toward Lydian/Major vs. Dorian/Natural minor; instrument warm-tone affinity |
-| **Mean saturation** | mean of the HSV saturation channel | scale selection (Dorian preference at moderate saturation); instrument colorfulness affinity |
-| **Bright centroid** (horizontal) | center of mass of bright pixels along the horizontal axis | stereo pan bias of the main melody and chord layers |
-| **Shadow centroid** (horizontal) | center of mass of shadow pixels along the horizontal axis | stereo pan bias of the bass layer |
-| **Low Fourier energy** | fraction of non-DC power in radial frequencies $r < 0.14$ | pad velocity and sustain weight; bass strength; smooth-timbre affinity (strings, organ) |
-| **High Fourier energy** | fraction of non-DC power in radial frequencies $r \geq 0.34$ | arpeggio density; texture layer brightness; tempo boost (Scientific mode); bright-timbre affinity |
-| **Spectral centroid** | power-weighted mean radial frequency | tempo contribution (Scientific mode); texture density |
-| **Spectral bandwidth** | power-weighted standard deviation around the centroid | arpeggio density; texture richness |
-| **Periodic peak score** | ratio of extreme Fourier peak to background power | scale tendency toward pentatonic; melodic repetition; percussive-timbre affinity (kalimba, marimba) |
-| **Saliency peak / area / spread** | derived from a 3-component saliency map (color rarity + luminance rarity + edge strength) | number of solo-layer accent notes; their durations; whether the solo layer is sparse or dense |
-| **Saliency pixel positions** | horizontal and vertical coordinates of the most salient pixels | timing and pitch of each individual solo note |
-| **Luminance slice sequence** | left-to-right scan of vertical slice energies and vertical centroids | full melodic contour of the main layer: each image column becomes one note |
-| **Color palette trajectory** | ordered sequence of dominant color clusters, left to right | chord progression selection: hue diversity and brightness jumps drive harmonic variety |
+| Luminance map | perceived brightness at each pixel | pitch register, shadows, highlights, melody shape |
+| Edge strength map | local spatial changes in brightness | rhythmic activity and texture density |
+| 2D Fourier log-magnitude | global spatial frequency content | smoothness, detail, periodicity, tempo and instruments |
+| Shadow/highlight map | dark and bright pixel regions | bass weight, bright accents, mood |
+| Saliency map | visually dominant regions | solo/accent notes in GeneralUser GS mode |
 
-A few design principles are apparent from reading this table together:
+Third, the app turns the image features into musical defaults. A smooth symmetric photo tends to create a stable and slower piece. A sharp asymmetric photo tends to create stronger variation, more notes and a denser texture. A bright colorful photo tends to select brighter registers and timbres. A dark low-frequency image tends to give more weight to bass, strings and pads.
 
-- **Tempo and rhythm** are driven primarily by spatial complexity: edge density, contrast and high Fourier energy. Smooth, low-contrast images tend to produce slow, sparse rhythms; sharp, detailed images tend to produce faster, denser ones.
-- **Tonality and mode** are driven primarily by perceptual color: hue → key, brightness + warmth → mode, saturation → modal nuance.
-- **Instrumentation** integrates all feature groups: dark and smooth → strings and pads; bright and detailed → bells and plucked instruments; periodic → mallet percussion.
-- **Melody** has the most direct spatial encoding: the image is literally read left-to-right, top-to-bottom, with brighter high-placed regions producing higher pitches.
-- **Harmony** bridges color and structure: the dominant color palette is ordered spatially and its diversity drives chord progression variety.
-- **Stereo image** mirrors the spatial layout of the photo: bright regions pan the melody to the side where brightness is concentrated; shadow regions anchor the bass.
+Finally, the app generates a layered composition. The result contains up to six layers:
+
+| Layer | Role in the composition |
+|---|---|
+| Main | principal melody derived from left-to-right luminance slices |
+| Texture | arpeggios and small rhythmic events derived from detail and high frequencies |
+| Bass | low register root/fifth support, influenced by shadows and low frequencies |
+| Pad | sustained harmonic background, stronger for smooth low-frequency images |
+| Chord | harmonic hits following the selected chord progression |
+| Solo | saliency-driven accent melody, available in GeneralUser GS mode |
+
+The interface exposes both musical controls and lower-level analysis thresholds. The range sliders used for min/max values are ordered, and the backend also sorts and clamps them. This prevents invalid settings such as a low Fourier band limit above the high Fourier band limit.
 
 ---
 
-## 3. Image Representation and Luminance Analysis
+## 3. Pipeline at a Glance
 
-### 2.1 Input Normalization
+| Stage | Main output | Used for |
+|---|---|---|
+| RGB normalization | normalized image $R,G,B \in [0,1]$ | all later analysis |
+| Luminance computation | scalar image $Y$ | brightness, contrast, melody, shadows, highlights |
+| Gradient analysis | edge map $\hat{G}$ and edge density $D_e$ | texture, tempo, rhythm |
+| Entropy analysis | texture entropy $H_{\mathrm{tex}}$ | complexity and bar defaults |
+| Symmetry analysis | symmetry score $S$ | variation strength |
+| HSV color analysis | dominant hue, saturation, warmth | key, scale, instruments |
+| 2D Fourier analysis | low/mid/high energy, centroid, bandwidth, periodic peak score | tempo, instruments, texture, pad/bass balance |
+| Saliency analysis | saliency map and salient coordinates | solo/accent layer |
+| Musical mapping | key, scale, tempo, bars, layer instruments | event generation |
+| Event generation | ordered note events | audio synthesis and MIDI export |
+| Rendering | stereo waveform at 44100 Hz | audio player, WAV/MP3 export, plots |
 
-The input image is converted to the RGB color space and normalized so that each channel lies in $[0, 1]$. If the image has a fourth channel (RGBA), the alpha channel is discarded. Let $R, G, B : \Omega \to [0,1]$ denote the three normalized channel images over the pixel grid $\Omega$ of size $H \times W$.
-
-### 2.2 Perceptual Luminance
-
-A luminance image is computed using the ITU-R BT.709 perceptual weights:
-
-$$
-Y(x,y) = 0.2126\, R(x,y) + 0.7152\, G(x,y) + 0.0722\, B(x,y)
-$$
-
-These coefficients reflect the different sensitivity of the human visual system to the three primary colors: green contributes more than seventy percent of perceived brightness, red slightly more than twenty percent, and blue less than eight percent. The resulting $Y$ is the principal scalar field used for most structural descriptors.
-
-### 2.3 Global Brightness and Contrast
-
-The global brightness is the spatial mean of luminance:
+A note event has the form:
 
 $$
-\mu_Y = \frac{1}{HW} \sum_{(x,y) \in \Omega} Y(x,y)
+e_i = (t_i, d_i, m_i, v_i, I_i, p_i, \ell_i)
 $$
 
-The contrast is the standard deviation:
-
-$$
-\sigma_Y = \sqrt{\frac{1}{HW} \sum_{(x,y) \in \Omega} \bigl(Y(x,y) - \mu_Y\bigr)^2}
-$$
-
-The dynamic range is estimated from robust percentiles to avoid sensitivity to outlier pixels:
-
-$$
-D_Y = P_{95}(Y) - P_{05}(Y)
-$$
-
-where $P_q$ denotes the $q$-th percentile taken over all pixel values.
-
-### 2.4 Shadow and Highlight Regions
-
-Shadow and highlight masks are derived from adaptive percentile-based thresholds:
-
-$$
-\mathcal{S} = \bigl\{(x,y) : Y(x,y) < \max\bigl(0.18,\; P_{05}(Y) + 0.03\bigr)\bigr\}
-$$
-
-$$
-\mathcal{H} = \bigl\{(x,y) : Y(x,y) > \min\bigl(0.82,\; P_{95}(Y) - 0.03\bigr)\bigr\}
-$$
-
-The shadow proportion and highlight proportion are:
-
-$$
-s = \frac{|\mathcal{S}|}{HW}, \qquad h = \frac{|\mathcal{H}|}{HW}
-$$
-
-These two scalars influence the musical mood, bass weight, melodic register and automatic scale selection.
-
-### 2.5 Spatial Centroids
-
-For musical panning, the app computes the horizontal center of mass of the bright region, the shadow region and the highlight region separately. Given a weight map $w(x,y)$, the horizontal centroid is:
-
-$$
-c_x = \frac{\sum_{(x,y)} x \cdot w(x,y)}{\sum_{(x,y)} w(x,y)}
-$$
-
-normalized so that $c_x \in [0, 1]$.
-
-The bright centroid uses $w = \max(Y - \mu_Y, 0)$, the shadow centroid uses $w = (1-Y) \cdot \mathbf{1}_{\mathcal{S}}$, and the highlight centroid uses $w = Y \cdot \mathbf{1}_{\mathcal{H}}$. These positions control the initial pan offset of the main melody, the bass layer and the chord hits, giving the stereo image a spatial correspondence to the photograph.
+where $t_i$ is the start time, $d_i$ the duration, $m_i$ the MIDI pitch, $v_i$ the velocity, $I_i$ the instrument, $p_i$ the stereo pan and $\ell_i$ the layer label.
 
 ---
 
-## 4. Spatial Descriptors: Edges, Texture Entropy and Symmetry
+## 4. Notation
 
-### 3.1 Gradient-Based Edge Map
-
-Spatial edges are extracted by computing the gradient of the luminance field. The discrete gradient components $\partial_x Y$ and $\partial_y Y$ are obtained via `numpy.gradient`, which uses second-order central differences in the interior and first-order one-sided differences at the boundaries. The edge magnitude is:
-
-$$
-G(x,y) = \sqrt{\bigl(\partial_x Y(x,y)\bigr)^2 + \bigl(\partial_y Y(x,y)\bigr)^2}
-$$
-
-The map $G$ is then normalized to $[0,1]$:
-
-$$
-\hat{G}(x,y) = \frac{G(x,y) - \min G}{\max G - \min G}
-$$
-
-The edge density is the fraction of pixels whose normalized magnitude exceeds an adaptive threshold:
-
-$$
-D_e = \frac{1}{HW}\, \bigl|\bigl\{(x,y) : \hat{G}(x,y) > \max(0.08,\; P_{75}(\hat{G}))\bigr\}\bigr|
-$$
-
-This threshold adapts to the overall edge distribution of the image, so it remains meaningful for both soft and sharp photographs. Musically, edge density controls rhythmic activity, attack sharpness and the Scientific tempo mode.
-
-### 3.2 Texture Entropy
-
-The normalized edge map $\hat{G}$ is treated as a spatial texture descriptor. Its histogram over $K = 64$ equally spaced bins on $[0, 1]$ defines a probability mass function $\{p_k\}$. The normalized Shannon entropy of this distribution is:
-
-$$
-H_{\mathrm{tex}} = -\frac{1}{\log_2 K} \sum_{k=1}^{K} p_k \log_2 p_k
-$$
-
-The normalization by $\log_2 K$ maps the entropy to $[0, 1]$ regardless of $K$, with $H_{\mathrm{tex}} = 0$ for a perfectly uniform edge map (all pixels identical) and $H_{\mathrm{tex}} \to 1$ for a maximally spread edge distribution.
-
-A smooth photographic background yields low $H_{\mathrm{tex}}$. A busy scene with irregular structures and varied edge strengths yields high $H_{\mathrm{tex}}$. This descriptor drives two musical defaults:
-
-$$
-C_{\mathrm{auto}} = \operatorname{clip}\!\bigl(0.25 + 0.65\, H_{\mathrm{tex}},\; 0.25,\; 0.90\bigr)
-$$
-
-$$
-B_s = 0.40\, H_{\mathrm{tex}} + 0.25\, D_e + 0.20\, E_{\mathrm{high}} + 0.15\, P
-$$
-
-where $C_{\mathrm{auto}}$ is the automatic composition complexity, $B_s$ is the bar-count score, $E_{\mathrm{high}}$ is the high Fourier band energy and $P$ is the periodic peak score (both defined in Section 6).
-
-### 3.3 Left-Right and Top-Bottom Symmetry
-
-Symmetry is estimated by comparing the luminance image with its reflections. Let $\tilde{Y}_{LR}(x,y) = Y(W-1-x, y)$ denote the left-right mirror and $\tilde{Y}_{TB}(x,y) = Y(x, H-1-y)$ the top-bottom mirror. The corresponding similarity scores are:
-
-$$
-S_{LR} = 1 - \frac{1}{HW}\sum_{(x,y)} \bigl|Y(x,y) - \tilde{Y}_{LR}(x,y)\bigr|
-$$
-
-$$
-S_{TB} = 1 - \frac{1}{HW}\sum_{(x,y)} \bigl|Y(x,y) - \tilde{Y}_{TB}(x,y)\bigr|
-$$
-
-The combined symmetry score weights left-right symmetry more strongly:
-
-$$
-S = 0.70\, S_{LR} + 0.30\, S_{TB}
-$$
-
-The automatic variation strength is then:
-
-$$
-V_{\mathrm{auto}} = \operatorname{clip}\!\bigl(0.25 + 0.60\,(1 - S),\; 0.25,\; 0.85\bigr)
-$$
-
-A symmetric image therefore tends to produce stable, repetitive musical forms. An asymmetric image tends to produce stronger second-half evolution, greater melodic deviation and richer harmonic motion.
+| Symbol | Meaning |
+|---|---|
+| $R,G,B$ | normalized RGB channels of the image |
+| $Y$ | perceptual luminance image |
+| $H,W$ | image height and width after analysis resizing |
+| $\Omega$ | pixel grid of size $H \times W$ |
+| $P_q(X)$ | $q$-th percentile of array $X$ |
+| $\mu_Y$ | mean luminance |
+| $\sigma_Y$ | luminance contrast |
+| $D_Y$ | robust luminance dynamic range |
+| $\hat{G}$ | normalized gradient magnitude map |
+| $D_e$ | edge density |
+| $H_{\mathrm{tex}}$ | texture entropy |
+| $S$ | symmetry score |
+| $F(u,v)$ | centered 2D Fourier transform of luminance |
+| $r(u,v)$ | normalized radial spatial frequency |
+| $E_{\mathrm{low}}, E_{\mathrm{mid}}, E_{\mathrm{high}}$ | Fourier energy proportions in the low, mid and high bands |
+| $\rho_c$ | Fourier radial centroid |
+| $B_F$ | Fourier radial bandwidth |
+| $P_F$ | periodic peak score |
+| $\mathcal{S}$ | saliency map |
+| $T$ | tempo in beats per minute |
+| $\Delta t$ | beat period, $\Delta t = 60/T$ |
+| $B$ | number of bars |
 
 ---
 
-## 5. Chromatic and Color Features
+## 5. Image Analysis
 
-### 4.1 HSV Decomposition
+### 5.1 RGB normalization
 
-The hue, saturation and value (HSV) representation provides perceptually meaningful chromatic features. Starting from normalized RGB values, the value (brightness) is:
-
-$$
-V_c = \max(R, G, B)
-$$
-
-The chroma (color extent) is:
+The input photo is converted to RGB, corrected for EXIF orientation, resized if necessary and normalized to floating-point values in $[0,1]$:
 
 $$
-\delta = V_c - \min(R, G, B)
+R(x,y),G(x,y),B(x,y) \in [0,1]
 $$
 
-The saturation is:
+The analysis resize does not change the file exported by the user; it only controls the computational resolution of the feature extraction. A larger analysis side preserves finer details but increases the cost of Fourier and saliency computations.
+
+### 5.2 Perceptual luminance
+
+Most structural descriptors are computed from luminance rather than directly from RGB. The app uses the ITU-R BT.709 weights:
 
 $$
-\text{Sat} = \begin{cases} \delta / V_c & \text{if } V_c > 0 \\ 0 & \text{otherwise} \end{cases}
+Y(x,y) = 0.2126R(x,y) + 0.7152G(x,y) + 0.0722B(x,y)
 $$
 
-The hue angle in $[0,1)$ is computed from the dominant channel, following the standard formula with the result taken modulo 1.
+These weights reflect human brightness perception: green contributes much more strongly than blue.
 
-### 4.2 Dominant Hue via Circular Weighted Mean
-
-A single arithmetic mean of hue values is meaningless because hue is a circular quantity defined on the unit circle. The app uses a circular weighted mean. The weight of each pixel is:
+The global brightness is:
 
 $$
-w(x,y) = \mathrm{Sat}(x,y) \cdot \bigl(0.25 + Y(x,y)\bigr)
+\mu_Y = \frac{1}{HW}\sum_{(x,y)\in\Omega}Y(x,y)
 $$
 
-so that highly saturated and well-lit pixels contribute more. The mean hue angle is then:
+The contrast is:
 
 $$
-\bar{h} = \frac{1}{2\pi} \arctan_2\!\left(\sum_{(x,y)} w \sin(2\pi h),\; \sum_{(x,y)} w \cos(2\pi h)\right) \bmod 1
+\sigma_Y = \sqrt{\frac{1}{HW}\sum_{(x,y)\in\Omega}\bigl(Y(x,y)-\mu_Y\bigr)^2}
 $$
 
-where $\arctan_2$ returns a value in $(-\pi, \pi]$. The resulting $\bar{h} \in [0,1)$ encodes the dominant chromatic identity of the image in a manner that is invariant to the arbitrary placement of red at $h=0$ and robust to bimodal hue distributions.
-
-### 4.3 Warmth
-
-A scalar warmth index is defined as the average red-blue channel difference:
+The dynamic range uses user-controlled luminance percentiles $p_L$ and $p_H$, defaulting to $5\%$ and $95\%$:
 
 $$
-w_{\mathrm{arm}} = \frac{1}{HW}\sum_{(x,y)} \bigl(R(x,y) - B(x,y)\bigr)
+D_Y = P_{p_H}(Y) - P_{p_L}(Y)
 $$
 
-A positive value indicates a warm-toned image (more red, orange or yellow), while a negative value indicates a cool-toned image (more blue or cyan). Warmth contributes to scale selection and instrument affinity scoring.
+Using percentiles avoids letting a few isolated pixels dominate the range.
+
+### 5.3 Shadows and highlights
+
+The app defines two masks. The shadow mask is:
+
+$$
+\mathcal{M}_{\mathrm{shadow}} = \left\{(x,y):Y(x,y) < \max\bigl(\tau_s, P_{p_L}(Y)+\delta_s\bigr)\right\}
+$$
+
+The highlight mask is:
+
+$$
+\mathcal{M}_{\mathrm{highlight}} = \left\{(x,y):Y(x,y) > \min\bigl(\tau_h, P_{p_H}(Y)-\delta_h\bigr)\right\}
+$$
+
+The defaults are $\tau_s=0.18$, $\delta_s=0.03$, $\tau_h=0.82$ and $\delta_h=0.03$. The resulting proportions are:
+
+$$
+s = \frac{|\mathcal{M}_{\mathrm{shadow}}|}{HW},
+\qquad
+h = \frac{|\mathcal{M}_{\mathrm{highlight}}|}{HW}
+$$
+
+Musically, shadows strengthen bass and darker timbres. Highlights strengthen bright timbres, arpeggios and accent layers.
+
+### 5.4 Edge strength
+
+Edges are extracted from the luminance gradient:
+
+$$
+G(x,y) = \sqrt{\bigl(\partial_xY(x,y)\bigr)^2 + \bigl(\partial_yY(x,y)\bigr)^2}
+$$
+
+The gradient magnitude is normalized to $[0,1]$:
+
+$$
+\hat{G}(x,y) = \frac{G(x,y)-\min G}{\max G-\min G}
+$$
+
+The edge density is the fraction of pixels above a threshold. The threshold combines a percentile and a fixed minimum:
+
+$$
+D_e = \frac{1}{HW}\left|\left\{(x,y):\hat{G}(x,y)>\max\bigl(\tau_e,P_{q_e}(\hat{G})\bigr)\right\}\right|
+$$
+
+The default values are $q_e=75\%$ and $\tau_e=0.08$. This makes the detector adaptive: it can still find relevant edges in soft images while avoiding excessive detections in noisy images.
+
+### 5.5 Texture entropy
+
+The edge map is also used as a texture descriptor. A histogram with $K$ bins is computed over $\hat{G}$, then normalized into probabilities $p_k$. The texture entropy is:
+
+$$
+H_{\mathrm{tex}} = -\frac{1}{\log_2K}\sum_{k=1}^{K}p_k\log_2p_k
+$$
+
+The default is $K=64$ bins. Low entropy means the image is visually uniform or smooth. High entropy means the image contains many different edge strengths and therefore a more complex texture. The app uses this value to set the automatic composition complexity and to influence the number of bars.
+
+### 5.6 Symmetry
+
+The symmetry score compares the luminance image to its left-right and top-bottom reflections:
+
+$$
+S_{LR}=1-\frac{1}{HW}\sum_{(x,y)}|Y(x,y)-Y(W-1-x,y)|
+$$
+
+$$
+S_{TB}=1-\frac{1}{HW}\sum_{(x,y)}|Y(x,y)-Y(x,H-1-y)|
+$$
+
+The final score gives more importance to left-right symmetry:
+
+$$
+S=0.70S_{LR}+0.30S_{TB}
+$$
+
+A high score gives a stable composition with lower variation. A low score increases the default variation strength.
+
+### 5.7 Color features
+
+The RGB image is converted internally into HSV-like features. Saturation is computed from the RGB chroma:
+
+$$
+\mathrm{Sat}(x,y)=
+\begin{cases}
+\dfrac{\max(R,G,B)-\min(R,G,B)}{\max(R,G,B)}, & \max(R,G,B)>0 \\
+0, & \text{otherwise}
+\end{cases}
+$$
+
+Hue is circular, so a simple arithmetic average is not valid. The app computes a weighted circular mean. Each pixel weight is:
+
+$$
+w(x,y)=\mathrm{Sat}(x,y)\cdot(0.25+Y(x,y))
+$$
+
+The dominant hue is:
+
+$$
+\bar{h}=\frac{1}{2\pi}\operatorname{atan2}\left(
+\sum w\sin(2\pi h),
+\sum w\cos(2\pi h)
+\right)\bmod 1
+$$
+
+This hue controls the tonal center. The mean saturation influences scale choice and instrument scoring. Warmth is measured as:
+
+$$
+w_{\mathrm{arm}}=\frac{1}{HW}\sum_{(x,y)}\bigl(R(x,y)-B(x,y)\bigr)
+$$
+
+Positive values indicate a warmer photo; negative values indicate a cooler photo.
+
+### 5.8 Spatial centroids
+
+The horizontal position of bright, shadowed and highlighted regions is used for stereo placement. For any non-negative weight map $W_m(x,y)$, the horizontal center of mass is:
+
+$$
+c_x=\frac{\sum xW_m(x,y)}{\sum W_m(x,y)}
+$$
+
+normalized to $[0,1]$. The main melody and chords follow the bright centroid, while the bass follows the shadow centroid. This gives the stereo image a relation to the spatial layout of the photo.
 
 ---
 
-## 6. Visual Saliency Estimation
+## 6. Fourier Analysis of the Photo
 
-### 5.1 Motivation
+The Fourier analysis describes the image in terms of spatial frequency. Large smooth structures correspond to low frequencies. Fine texture, edges and noise correspond to high frequencies.
 
-Visual saliency is the property of a region to draw the eye. Salient regions are not simply bright or contrasted: they are visually distinctive relative to their surroundings. In this app, a saliency map guides the placement, pitch and spacing of the solo-layer accent notes, so that the most visually prominent features of the image produce the most prominent melodic events.
+### 6.1 Preprocessing before the FFT
 
-### 5.2 Three-Component Saliency Model
-
-The saliency map is built from three complementary components.
-
-**Color rarity** measures how different each pixel's color is from the image average:
+The mean luminance is removed, then a separable Hanning window is applied:
 
 $$
-C_r(x,y) = \left\| \begin{pmatrix} R(x,y) \\ G(x,y) \\ B(x,y) \end{pmatrix} - \begin{pmatrix} \bar{R} \\ \bar{G} \\ \bar{B} \end{pmatrix} \right\|_2
+\tilde{Y}(x,y)=\bigl(Y(x,y)-\mu_Y\bigr)w_H(x)w_H(y)
 $$
 
-where $(\bar{R}, \bar{G}, \bar{B})$ is the mean RGB vector over all pixels. Pixels far from the global average color appear locally unusual and therefore tend to be salient.
-
-**Luminance rarity** measures how different each pixel's brightness is from the mean:
+with:
 
 $$
-L_r(x,y) = |Y(x,y) - \mu_Y|
+w_H(n)=0.5-0.5\cos\left(\frac{2\pi n}{N-1}\right)
 $$
 
-**Edge strength** $\hat{G}(x,y)$ (defined in Section 3) contributes because high-contrast boundaries attract attention.
+The window reduces boundary discontinuities. Without it, the FFT would interpret the finite image as a periodic tile and introduce artificial high-frequency content at the borders.
 
-Both $C_r$ and $L_r$ are normalized to $[0,1]$ independently before combination. The base saliency is:
+### 6.2 Centered 2D Fourier transform
 
-$$
-\mathcal{B}(x,y) = 0.42\, \hat{G}(x,y) + 0.34\, \hat{C}_r(x,y) + 0.24\, \hat{L}_r(x,y)
-$$
-
-### 5.3 Center Bias
-
-Natural photography tends to center subjects, and the human visual system has a documented center-viewing bias during free gaze. A Gaussian-like radial weight is therefore added:
+The 2D Fourier transform is:
 
 $$
-\text{CB}(x,y) = 1 - \left\|\begin{pmatrix} x/(W-1) - 0.5 \\ y/(H-1) - 0.5 \end{pmatrix}\right\|_2
+F(u,v)=\sum_{x=0}^{W-1}\sum_{y=0}^{H-1}\tilde{Y}(x,y)e^{-j2\pi(ux/W+vy/H)}
 $$
 
-normalized to $[0,1]$.
+The spectrum is shifted so that the DC component is displayed at the center. The photo analysis panel shows:
+
+$$
+M_{\log}(u,v)=\log(1+|F(u,v)|)
+$$
+
+normalized to $[0,1]$. The logarithm is used because Fourier magnitudes usually have a very large dynamic range.
+
+### 6.3 Radial frequency bands
+
+For each frequency bin, the normalized radial frequency is:
+
+$$
+r(u,v)=\frac{\sqrt{u^2+v^2}}{\max\sqrt{u^2+v^2}}
+$$
+
+A small DC radius $r_{DC}$ is excluded from energy measurements. The remaining spectrum is split into three user-controlled bands:
+
+| Band | Default radial range | Interpretation |
+|---|---|---|
+| Low | $[r_{DC},0.14)$ | large smooth structures |
+| Mid | $[0.14,0.34)$ | medium shapes and transitions |
+| High | $[0.34,1]$ | fine texture, edges, micro-details |
+
+The low and high band limits are controlled by an ordered range slider. If needed, the backend also sorts and clamps the values.
+
+The energy of a band $\mathcal{B}$ is:
+
+$$
+E_{\mathcal{B}}=\frac{\sum_{(u,v)\in\mathcal{B}}|F(u,v)|^2}{\sum_{r(u,v)\ge r_{DC}}|F(u,v)|^2}
+$$
+
+Low-frequency energy supports pads and bass. High-frequency energy increases texture density, bright timbres and tempo in the Scientific mapping mode.
+
+### 6.4 Fourier centroid and bandwidth
+
+The radial centroid is:
+
+$$
+\rho_c=\frac{\sum r(u,v)|F(u,v)|^2}{\sum |F(u,v)|^2}
+$$
+
+and the radial bandwidth is:
+
+$$
+B_F=\sqrt{\frac{\sum (r(u,v)-\rho_c)^2|F(u,v)|^2}{\sum |F(u,v)|^2}}
+$$
+
+A high centroid means the image is dominated by fine-scale structures. A large bandwidth means energy is spread across several scales.
+
+### 6.5 Directional energies
+
+The angle of a frequency bin is:
+
+$$
+\theta(u,v)=\operatorname{atan2}(v,u)
+$$
+
+The app measures horizontal and vertical directional energies with a user-controlled orientation bandwidth $\omega_o$:
+
+$$
+E_{\mathrm{horizontal}}=\frac{\sum_{|\sin\theta|<\omega_o}|F|^2}{\sum |F|^2},
+\qquad
+E_{\mathrm{vertical}}=\frac{\sum_{|\cos\theta|<\omega_o}|F|^2}{\sum |F|^2}
+$$
+
+The diagonal energy is the remaining part:
+
+$$
+E_{\mathrm{diagonal}}=1-E_{\mathrm{horizontal}}-E_{\mathrm{vertical}}
+$$
+
+These values are displayed as descriptors of image structure. They are less central to the musical mapping than radial low/mid/high energies.
+
+### 6.6 Periodic peak score
+
+Some images contain regular patterns: stripes, grids, repeated windows, tiles or periodic textures. Such images produce a Fourier spectrum with isolated strong peaks. The app estimates this with:
+
+$$
+P_F=\operatorname{clip}\left(
+\frac{\log\left(1+\dfrac{P_{p_H}(|F|^2)}{P_{p_L}(|F|^2)+\varepsilon}\right)}{d_F},0,1
+\right)
+$$
+
+The default percentile range is $(p_L,p_H)=(90,99.7)$ and the default divisor is $d_F=5$. The percentile range is also an ordered range slider. A high periodic peak score encourages loop-like structure, mallet-like timbres and more regular motifs.
+
+---
+
+## 7. Visual Saliency
+
+Saliency estimates which regions of the photo are likely to attract attention. In this app, saliency does not depend on object recognition. It is built from three measurable cues: edge strength, color rarity and luminance rarity.
+
+### 7.1 Color rarity
+
+Let $\bar{\mathbf{c}}=(\bar{R},\bar{G},\bar{B})$ be the mean RGB color of the image. The color rarity is:
+
+$$
+C_r(x,y)=\left\|\begin{bmatrix}R(x,y)\\G(x,y)\\B(x,y)\end{bmatrix}-\bar{\mathbf{c}}\right\|_2
+$$
+
+Pixels with colors far from the global average become more salient.
+
+### 7.2 Luminance rarity
+
+The luminance rarity is:
+
+$$
+L_r(x,y)=|Y(x,y)-\mu_Y|
+$$
+
+Very bright and very dark pixels can both be salient if they are unusual compared with the rest of the image.
+
+### 7.3 Saliency combination
+
+The three components are normalized and blended with user-controlled weights:
+
+$$
+B_s(x,y)=w_e\hat{G}(x,y)+w_c\hat{C}_r(x,y)+w_l\hat{L}_r(x,y)
+$$
+
+The default weights are $w_e=0.42$, $w_c=0.34$ and $w_l=0.24$, normalized internally so their sum is 1.
+
+A small center bias is added because many photographs place the subject near the center:
+
+$$
+C_B(x,y)=1-\left\|\begin{bmatrix}x/(W-1)-0.5\\y/(H-1)-0.5\end{bmatrix}\right\|_2
+$$
 
 The final saliency map is:
 
 $$
-\mathcal{S}(x,y) = \mathrm{normalize}_{[0,1]}\!\bigl(0.88\,\mathcal{B}(x,y) + 0.12\,\text{CB}(x,y)\bigr)
+\mathcal{S}(x,y)=\operatorname{normalize}_{[0,1]}\left((1-\lambda_c)B_s(x,y)+\lambda_cC_B(x,y)\right)
 $$
 
-### 5.4 Saliency Descriptors
+where $\lambda_c$ is the center-bias weight, defaulting to 0.12.
 
-The top 4% of saliency values defines the foreground mask $\mathcal{M}$. From this mask, the app extracts:
+### 7.4 Saliency mask and descriptors
 
-| Descriptor | Formula |
+A salient mask is defined with a percentile threshold and a minimum threshold:
+
+$$
+\mathcal{M}_{\mathcal{S}}=\left\{(x,y):\mathcal{S}(x,y)\ge\max\bigl(\tau_{\mathcal{S}},P_{q_{\mathcal{S}}}(\mathcal{S})\bigr)\right\}
+$$
+
+The defaults are $q_{\mathcal{S}}=96\%$ and $\tau_{\mathcal{S}}=0.20$. From this mask, the app computes saliency peak, mean, area, centroid and spread. These values are used by the solo/accent layer.
+
+---
+
+## 8. From Visual Features to Musical Decisions
+
+This table is the practical map between image descriptors and musical behavior.
+
+| Visual feature | Musical effect |
 |---|---|
-| Saliency peak | $\max_{(x,y)} \mathcal{S}(x,y)$ |
-| Saliency mean | $\frac{1}{HW}\sum \mathcal{S}(x,y)$ |
-| Saliency area | $\frac{1}{HW}|\mathcal{M}|$ |
-| Saliency centroid | $(c_x, c_y)$ from weighted center of mass of $\mathcal{M}$ |
-| Saliency spread | weighted standard deviation of distance to centroid, normalized |
+| Mean brightness $\mu_Y$ | root register, scale tendency, mood |
+| Contrast $\sigma_Y$ | tempo, melodic velocity, chord energy |
+| Shadow proportion $s$ | bass strength, darker timbres, slower tempo |
+| Highlight proportion $h$ | bright instruments, accents, chord activity |
+| Edge density $D_e$ | tempo, attacks, rhythm density |
+| Texture entropy $H_{\mathrm{tex}}$ | complexity and number of bars |
+| Symmetry $S$ | variation strength |
+| Dominant hue $\bar{h}$ | tonal center / key |
+| Saturation | scale and instrument colorfulness |
+| Warmth | scale tendency and warm/cool instrument affinity |
+| Low Fourier energy $E_{\mathrm{low}}$ | pads, bass, smooth instruments |
+| High Fourier energy $E_{\mathrm{high}}$ | arpeggios, bright timbres, fast texture |
+| Fourier centroid $\rho_c$ | Scientific tempo contribution |
+| Fourier bandwidth $B_F$ | texture richness |
+| Periodic peak score $P_F$ | repetitive motifs, mallet/percussive affinity |
+| Saliency peak/area/spread | solo note count, spacing and duration |
+| Saliency positions | solo timing and pitch |
+| Bright centroid | main/chord stereo pan |
+| Shadow centroid | bass stereo pan |
+| Luminance slices | main melody contour |
 
-The spread is:
-
-$$
-\sigma_{\mathcal{S}} = \operatorname{clip}\!\left(\frac{1}{0.45}\sqrt{\frac{\sum_{(x,y)} w(x,y) \bigl[(x_n - c_x)^2 + (y_n - c_y)^2\bigr]}{\sum_{(x,y)} w(x,y)}},\; 0,\; 1\right)
-$$
-
-where $x_n = x/(W-1)$, $y_n = y/(H-1)$ and $w(x,y) = \mathcal{S}(x,y) \cdot \mathbf{1}_{\mathcal{M}}$.
-
----
-
-## 7. Two-Dimensional Fourier Analysis
-
-### 6.1 Preprocessing
-
-Before computing the 2D DFT, the luminance image is preprocessed to reduce spectral leakage. The mean luminance is subtracted (DC removal), and a separable Hanning window is applied:
-
-$$
-\tilde{Y}(x,y) = \bigl(Y(x,y) - \mu_Y\bigr) \cdot w_H(x) \cdot w_H(y)
-$$
-
-where $w_H(n) = 0.5 - 0.5\cos(2\pi n / (N-1))$ is the $N$-point Hanning window. The windowing reduces the Gibbs phenomenon that arises from treating a finite image as a periodic signal, and prevents strong boundary discontinuities from polluting the spectral estimates.
-
-### 6.2 Centered Spectrum
-
-The 2D DFT is computed via the FFT algorithm and immediately frequency-shifted so that the DC component is at the center of the spectrum:
-
-$$
-F(u, v) = \mathrm{FFTshift}\!\left[\,\sum_{x=0}^{W-1}\sum_{y=0}^{H-1} \tilde{Y}(x,y)\, e^{-j2\pi(ux/W + vy/H)}\right]
-$$
-
-The displayed map is the log-magnitude:
-
-$$
-M_{\log}(u,v) = \log\!\bigl(1 + |F(u,v)|\bigr)
-$$
-
-normalized to $[0,1]$ for visualization. The logarithm is necessary because the DFT magnitude has a very large dynamic range: the strongest coefficients can be orders of magnitude larger than the weakest ones.
-
-### 6.3 Radial Frequency Bands
-
-Let $r(u,v)$ be the normalized radial frequency, defined as the Euclidean distance from the DC center to each frequency bin, divided by the maximum available radial frequency. Three frequency bands partition the non-DC spectrum:
-
-| Band | Radial range $r$ | Visual meaning |
-|---|---|---|
-| Low | $[0.025,\; 0.14)$ | large smooth structures, slow luminance gradients |
-| Mid | $[0.14,\; 0.34)$ | medium-scale shapes and transitions |
-| High | $[0.34,\; 1]$ | edges, fine textures, micro-details, noise |
-
-The normalized energy in a band $\mathcal{B}$ is:
-
-$$
-E_{\mathcal{B}} = \frac{\displaystyle\sum_{(u,v)\in\mathcal{B}} |F(u,v)|^2}{\displaystyle\sum_{(u,v)\notin\mathcal{D}} |F(u,v)|^2}
-$$
-
-where $\mathcal{D}$ is the DC region $r < 0.025$, excluded from all band computations. Low-frequency energy governs the weight of sustained layers (pad, bass). High-frequency energy governs arpeggio density, texture layer brightness and the aggressiveness of the Scientific tempo formula.
-
-### 6.4 Spectral Centroid and Bandwidth
-
-The power-weighted centroid of the non-DC spectrum is:
-
-$$
-\rho_c = \frac{\displaystyle\sum_{(u,v)\notin\mathcal{D}} r(u,v)\,|F(u,v)|^2}{\displaystyle\sum_{(u,v)\notin\mathcal{D}} |F(u,v)|^2}
-$$
-
-and the spectral bandwidth is the power-weighted standard deviation around this centroid:
-
-$$
-B = \sqrt{\frac{\displaystyle\sum_{(u,v)\notin\mathcal{D}} \bigl(r(u,v) - \rho_c\bigr)^2 |F(u,v)|^2}{\displaystyle\sum_{(u,v)\notin\mathcal{D}} |F(u,v)|^2}}
-$$
-
-A high centroid means the spectral energy is concentrated at fine scales. A large bandwidth means the spectrum is spread across many scales. Both quantities contribute to the Scientific tempo formula and to the arpeggio density parameter.
-
-### 6.5 Directional Frequency Energy
-
-The angle of each frequency bin is $\theta(u,v) = \arctan_2(v, u)$. The spectrum is split into:
-
-- **horizontal** energy: bins where $|\sin\theta| < 0.38$ (frequencies oriented along horizontal structures)
-- **vertical** energy: bins where $|\cos\theta| < 0.38$
-- **diagonal** energy: the complement $1 - E_h - E_v$
-
-These directional components are not directly used for note generation in the current version, but they are computed and exported to the analysis panel.
-
-### 6.6 Periodic Peak Score
-
-The periodic peak score estimates how much the spectrum is dominated by a few prominent frequencies, as opposed to a broad background:
-
-$$
-P = \operatorname{clip}\!\left(\frac{\log\!\bigl(1 + P_{99.7}(|F|^2) / (P_{90}(|F|^2) + \varepsilon)\bigr)}{5},\; 0,\; 1\right)
-$$
-
-where $P_q$ denotes the $q$-th percentile over all non-DC power values and $\varepsilon = 10^{-12}$. A high $P$ indicates the presence of regular periodic structures such as grids, stripes or strong repetitive textures. Musically, it encourages repetitive motifs, pentatonic scales, loop-like harmonic behavior and percussive timbres.
+This table is also a useful way to interpret the result. For example, if a photo produces a dense fast texture, the cause is usually a combination of edge density, high Fourier energy and texture entropy. If it produces a dark slow piece, the cause is usually low brightness, high shadow proportion and low high-frequency energy.
 
 ---
 
-## 8. Automatic Musical Parameters
+## 9. Automatic Structure: Bars, Complexity and Variation
 
-### 7.1 Tonal Center
+### 9.1 Complexity
 
-The dominant hue $\bar{h} \in [0,1)$ is mapped to the 12 chromatic pitch classes by:
-
-$$
-k = \operatorname{round}(12\,\bar{h}) \bmod 12
-$$
-
-The result is an index into the sequence $\{C, C\sharp, D, D\sharp, E, F, F\sharp, G, G\sharp, A, A\sharp, B\}$.
-
-The MIDI note of the root (the lowest note of the main melodic range) is shifted by brightness:
+The automatic complexity is derived from texture entropy. In the current app, the user controls the output range:
 
 $$
-\text{root} = \operatorname{clip}\!\Bigl(\,48 + k + \operatorname{round}\!\bigl(\operatorname{interp}(\mu_Y,\,[0,1],\,[-5,7])\bigr),\; 38,\; 58\Bigr)
+C_{\mathrm{auto}}=C_{\min}+(C_{\max}-C_{\min})H_{\mathrm{tex}}
 $$
 
-Darker images therefore use a lower register and brighter images a higher one, consistent with common psychoacoustic associations between luminance and pitch height.
+The default range is $[0.25,0.90]$. The final Complexity slider controls note density, melodic step rate and texture activation.
 
-### 7.2 Scale Selection
+### 9.2 Variation strength
 
-Six modal scales are available:
+Variation is derived from lack of symmetry:
 
-| Scale | Intervals (semitones from tonic) |
+$$
+V_{\mathrm{auto}}=V_{\min}+(V_{\max}-V_{\min})(1-S)
+$$
+
+The default range is $[0.25,0.85]$. A symmetric image gives lower variation. An asymmetric image gives stronger variation, especially in the second half of the piece.
+
+### 9.3 Number of bars
+
+The bar estimator uses a weighted score:
+
+$$
+Q_B=w_tH_{\mathrm{tex}}+w_eD_e+w_hE_{\mathrm{high}}+w_pP_F
+$$
+
+The default weights are $w_t=0.40$, $w_e=0.25$, $w_h=0.20$ and $w_p=0.15$, normalized internally.
+
+The app maps this score into three ranges:
+
+$$
+B_{\min}=\operatorname{round}\bigl(\operatorname{interp}(Q_B,[0,1],[B_{\min}^{lo},B_{\min}^{hi}])\bigr)
+$$
+
+$$
+B_{\max}=\operatorname{round}\bigl(\operatorname{interp}(Q_B,[0,1],[B_{\max}^{lo},B_{\max}^{hi}])\bigr)
+$$
+
+$$
+B_0=\operatorname{round}\bigl(\operatorname{interp}(Q_B,[0,1],[B_0^{lo},B_0^{hi}])\bigr)
+$$
+
+The default ranges are $[4,8]$ for minimum bars, $[12,24]$ for maximum bars and $[6,16]$ for the default value. The backend ensures $B_{\max}>B_{\min}$ and clamps $B_0$ inside the valid interval.
+
+---
+
+## 10. Tonality, Scale and Tempo
+
+### 10.1 Key from dominant hue
+
+The dominant hue is mapped to one of 12 pitch classes:
+
+$$
+k=\operatorname{round}(12\bar{h})\bmod 12
+$$
+
+with the pitch classes:
+
+$$
+\{C,C\#,D,D\#,E,F,F\#,G,G\#,A,A\#,B\}
+$$
+
+The root MIDI note is shifted by image brightness:
+
+$$
+\text{root}=\operatorname{clip}\left(48+k+\operatorname{round}\bigl(\operatorname{interp}(\mu_Y,[0,1],[-5,7])\bigr),38,58\right)
+$$
+
+Darker images therefore tend to use lower registers, while brighter images tend to use higher registers.
+
+### 10.2 Scale selection
+
+The available scales are:
+
+| Scale | Intervals in semitones |
 |---|---|
-| Major pentatonic | $0, 2, 4, 7, 9$ |
-| Minor pentatonic | $0, 3, 5, 7, 10$ |
-| Major (Ionian) | $0, 2, 4, 5, 7, 9, 11$ |
-| Natural minor (Aeolian) | $0, 2, 3, 5, 7, 8, 10$ |
-| Dorian | $0, 2, 3, 5, 7, 9, 10$ |
-| Lydian | $0, 2, 4, 6, 7, 9, 11$ |
+| Major pentatonic | $0,2,4,7,9$ |
+| Minor pentatonic | $0,3,5,7,10$ |
+| Major | $0,2,4,5,7,9,11$ |
+| Natural minor | $0,2,3,5,7,8,10$ |
+| Dorian | $0,2,3,5,7,9,10$ |
+| Lydian | $0,2,4,6,7,9,11$ |
 
-In automatic mode, the selection follows a threshold tree:
+If Scale is set to Automatic, the app uses brightness, warmth, saturation and contrast. Bright warm images tend toward Lydian or major-like scales. Darker images tend toward Dorian or natural minor.
 
-- $\mu_Y > 0.60$: Lydian if $w_{\mathrm{arm}} > 0.06$, else Major pentatonic
-- $0.42 < \mu_Y \leq 0.60$: Dorian if ($w_{\mathrm{arm}} > 0.06$ and $\mathrm{Sat} > 0.38$) or $\sigma_Y > 0.22$, else Major pentatonic
-- $\mu_Y \leq 0.42$: Dorian if $w_{\mathrm{arm}} > 0.05$ and $\mathrm{Sat} > 0.30$, else Natural minor
+### 10.3 Tempo mapping
 
-The logic reflects the standard association between brightness and major tonalities, and between darkness and minor or modal tonalities, while letting warmth and saturation introduce intermediary cases.
+The app offers four tempo modes.
 
-### 7.3 Number of Bars
-
-The bar-count score $B_s$ defined in Section 3.2 drives three interpolated values:
+Scientific mode uses spatial structure and Fourier descriptors:
 
 $$
-B_{\min} = \operatorname{round}\!\bigl(\operatorname{interp}(B_s,\,[0,1],\,[4,8])\bigr)
+T=\operatorname{clip}\bigl(50+70D_e+58\sigma_Y+42P_F+34E_{\mathrm{high}}+22\rho_c-20s,T_{lo},T_{hi}\bigr)
 $$
 
-$$
-B_{\max} = \operatorname{round}\!\bigl(\operatorname{interp}(B_s,\,[0,1],\,[12,24])\bigr)
-$$
+The default Scientific range is $[48,152]$ BPM.
+
+Balanced mode is a softer version:
 
 $$
-B_0 = \operatorname{round}\!\bigl(\operatorname{interp}(B_s,\,[0,1],\,[6,16])\bigr)
+T=\operatorname{clip}\bigl(62+38D_e+28\sigma_Y+20P_F+10E_{\mathrm{high}}-8s,T_{lo},T_{hi}\bigr)
 $$
 
-$B_0$ is the default value offered to the user. Simple images suggest short compositions; complex images suggest longer ones. The user can override the number of bars within the automatically suggested range, or can enter values outside it by selecting Manual mode.
+The default Balanced range is $[56,132]$ BPM.
 
-### 7.4 Tempo
-
-Four tempo strategies are available. Let $\Delta t = 60 / T$ denote the beat period in seconds:
-
-**Scientific** mapping uses the full set of Fourier and spatial descriptors:
+Musical mode is smoother and mostly color-based:
 
 $$
-T = \operatorname{clip}\!\bigl(50 + 70\,D_e + 58\,\sigma_Y + 42\,P + 34\,E_{\mathrm{high}} + 22\,\rho_c - 20\,s,\; 48,\; 152\bigr)
+T=\operatorname{clip}\bigl(82+10\overline{\mathrm{Sat}}+8\mu_Y-6s+4w_{\mathrm{arm}},T_{lo},T_{hi}\bigr)
 $$
 
-**Balanced** mapping is a softer variant:
+The default Musical range is $[72,108]$ BPM.
 
-$$
-T = \operatorname{clip}\!\bigl(62 + 38\,D_e + 28\,\sigma_Y + 20\,P + 10\,E_{\mathrm{high}} - 8\,s,\; 56,\; 132\bigr)
-$$
-
-**Musical** mapping is smoother and more conservative, relying on perceptual color attributes:
-
-$$
-T = \operatorname{clip}\!\bigl(82 + 10\,\bar{\text{Sat}} + 8\,\mu_Y - 6\,s + 4\,w_{\mathrm{arm}},\; 72,\; 108\bigr)
-$$
-
-**Manual** mode lets the user specify $T$ directly in BPM.
+Manual mode lets the user set the BPM directly.
 
 ---
 
-## 9. Chord Progression and Harmonic Structure
+## 11. Harmony and Chord Progression
 
-### 8.1 Triads from Scale Degrees
-
-For a scale with interval sequence $I = [i_0, i_1, \ldots, i_{n-1}]$ of length $n$, the triad rooted at degree $d$ is built by taking every other scale step:
+A chord is built from the selected scale by stacking every other scale degree. For a scale interval list:
 
 $$
-\text{chord}(d) = \bigl\{i_{d \bmod n},\; i_{(d+2) \bmod n} + 12\cdot\mathbf{1}_{d+2 \geq n},\; i_{(d+4) \bmod n} + 12\cdot\mathbf{1}_{d+4 \geq n}\bigr\}
+I=[i_0,i_1,\ldots,i_{n-1}]
 $$
 
-This is the standard tertian stacking used throughout Western harmonic theory. For a seven-note diatonic scale this yields major, minor and diminished triads at the appropriate degrees. For a pentatonic scale the chord members are more widely spaced, producing an open, modal sound.
-
-### 8.2 Progression Pool
-
-Two progression pools are available depending on scale length. For seven-note scales, the degree sequences available are $[0,4,5,3]$, $[0,5,3,4]$, $[0,2,5,4]$ and $[0,3,1,4]$. For shorter scales, simpler pools are used.
-
-The selection is deterministic from a seed derived from visual features:
+then a triad on degree $d$ is:
 
 $$
-\text{seed} = \operatorname{round}\!\bigl(997\,\bar{h} + 113\,P + 71\,H_{\mathrm{tex}} + 53\,c_x^{\mathcal{S}}\bigr)
+\operatorname{chord}(d)=\{i_d,i_{d+2},i_{d+4}\}
 $$
 
-where $c_x^{\mathcal{S}}$ is the horizontal saliency centroid. This seed is stable under small image perturbations but changes substantially when the visual content changes.
+with octave wrapping when the index exceeds the scale length.
 
-### 8.3 Variation-Driven Progression Shift
+The app chooses a progression from a small pool. For seven-note scales, examples include:
 
-When the variation strength exceeds 0.45, the second half of the composition uses a shifted progression index. This means the harmonic loop evolves at the midpoint, creating an A–B form typical of many musical structures without requiring a separately programmed bridge section.
+$$
+[0,4,5,3],\quad [0,5,3,4],\quad [0,2,5,4],\quad [0,3,1,4]
+$$
+
+The selected progression depends on dominant hue, periodic peak score, texture entropy and saliency centroid:
+
+$$
+\text{seed}=\operatorname{round}(997\bar{h}+113P_F+71H_{\mathrm{tex}}+53c_x^{\mathcal{S}})
+$$
+
+If variation strength is greater than 0.45, the second half of the composition shifts the progression index. This produces a simple A/B form: the first half establishes a loop, and the second half moves it slightly.
 
 ---
 
-## 10. Melody and Layered Composition
+## 12. Melody, Texture, Bass, Pad, Chord and Solo Layers
 
-### 9.1 Available Note Set
+### 12.1 Main melody from luminance slices
 
-The melodic note pool is built by enumerating all MIDI pitches of the form $\text{root} + 12k + i_j$ that lie within the range $[\text{root}+10, \text{root}+31]$, where $i_j$ ranges over the scale intervals. This confines the melody to a two-octave window centered slightly above the tonal root. The bass pool uses a lower window $[\text{root}-18, \text{root}+7]$.
+The image is read from left to right. For a composition of $B$ bars, the image is divided into $8B$ vertical slices. For each slice, the app computes local energy, contrast and vertical brightness centroid.
 
-### 9.2 Luminance Slice Scanning
-
-The image is divided into $8B$ vertical slices (where $B$ is the number of bars). For each slice $i$, the average luminance, local contrast (standard deviation), and vertical brightness centroid are computed. The centroid uses a percentile-trimmed weight map:
+The vertical centroid uses a percentile-trimmed weight:
 
 $$
-w_i(y) = \max\!\bigl(Y_i(y) - P_{35}(Y_i),\; 0\bigr)
+w_i(y)=\max\bigl(Y_i(y)-P_{35}(Y_i),0\bigr)
 $$
 
-to focus on the upper luminance values within the slice.
-
-The melodic position within the available note set is mapped from a combination of inverted vertical centroid and local energy deviation:
+The position inside the melody note pool is:
 
 $$
-\text{pos} = \operatorname{clip}\!\bigl(1 - c_{y,i} + 0.18\,(\bar{Y}_i - \mu_Y),\; 0,\; 1\bigr)
+\operatorname{pos}_i=\operatorname{clip}\bigl(1-c_{y,i}+0.18(\bar{Y}_i-\mu_Y),0,1\bigr)
 $$
 
-A bright region placed high in the image (small $c_{y,i}$, large $\bar{Y}_i$) produces a high-pitched note. A dark region placed low produces a low-pitched note. This spatial-to-pitch mapping is the central expressive link between image content and musical contour.
+High bright areas produce higher notes. Low dark areas produce lower notes.
 
-### 9.3 Melodic Offset from Variation
+The melody density depends on the Complexity slider. If complexity is above the melody density threshold, every slice can generate a note. Otherwise, every second slice is used. Very dark slices can be skipped unless they fall on a structural beat; the threshold is controlled by the Melody energy gate.
 
-The note pool is divided into four equal sections. A section-dependent offset $\delta_s \in \{0, 2, -2, 5\}$ is added to the nominal note index and scaled by the variation strength:
+### 12.2 Melodic variation
 
-$$
-\text{note}_{\mathrm{final}} = \text{note}_{\mathrm{nominal}} + \operatorname{round}(\delta_s \cdot V)
-$$
-
-For low $V$, the melody is nearly identical in both halves. For high $V$, the melodic contour shifts significantly in the second half.
-
-### 9.4 Texture Layer
-
-A texture arpeggio density parameter is derived from:
+The piece is divided into four broad sections. A small section-dependent offset is added to the melody:
 
 $$
-\rho_{\mathrm{tex}} = \operatorname{clip}(0.20 + 0.80\,C + 0.75\,E_{\mathrm{high}} + 0.45\,B,\; 0,\; 1)
+\Delta m \in \{0,2,-2,5\}
 $$
 
-where $C$ is composition complexity and $B$ is Fourier bandwidth. When $\rho_{\mathrm{tex}} > 0.28$, arpeggio events are generated at a rate of one per beat (or two per beat when $\rho_{\mathrm{tex}} > 0.55$), cycling through an extended chord pattern. Additionally, rhythmic tick events (unpitched percussion on MIDI channel 9) are added at subdivisions of the beat when $\rho_{\mathrm{tex}} > 0.18$.
-
-### 9.5 Pad and Chord Layers
-
-Pad events span the full duration of each bar (four beats) with a slight legato extension of 0.05 beats. Their velocity is proportional to low-frequency Fourier energy, making the pad louder when the image has smooth, large-scale structures:
+scaled by the variation strength:
 
 $$
-v_{\mathrm{pad}} = \operatorname{clip}(0.07 + 0.18\,E_{\mathrm{low}} + 0.04\,(1 - E_{\mathrm{high}}),\; 0.04,\; 0.28)
+m_{\mathrm{final}}=m_{\mathrm{base}}+\operatorname{round}(V\Delta m)
 $$
 
-Chord events are triggered once per bar (or twice when $E_{\mathrm{high}} > 0.22$), playing all three notes of the current progression chord simultaneously.
+This keeps the melody close to the image contour while preventing long outputs from becoming too repetitive.
 
-Bass events follow a root–fifth pattern: the root note at beat 1 and the perfect fifth (7 semitones above the root) at beat 3, with velocities proportional to shadow proportion and low-frequency energy.
+### 12.3 Pad, chord and bass layers
+
+Pad notes sustain the current chord across the bar. Their velocity increases with low-frequency energy:
+
+$$
+v_{\mathrm{pad}}=\operatorname{clip}(0.07+0.18E_{\mathrm{low}}+0.04(1-E_{\mathrm{high}}),0.04,0.28)
+$$
+
+Chord hits play the current triad once per bar. If high-frequency energy exceeds the Chord double-hit threshold, a second chord hit is added halfway through the bar.
+
+Bass uses a root/fifth pattern: root on beat 1 and fifth on beat 3. Bass velocity increases with shadow proportion and low-frequency energy:
+
+$$
+v_{\mathrm{bass}}=\operatorname{clip}(0.30+0.55s+0.25E_{\mathrm{low}},0.22,0.86)
+$$
+
+### 12.4 Texture and percussion
+
+Texture density is:
+
+$$
+\rho_{\mathrm{tex}}=\operatorname{clip}(0.20+0.80C+0.75E_{\mathrm{high}}+0.45B_F,0,1)
+$$
+
+where $C$ is the user-controlled complexity. If $\rho_{\mathrm{tex}}$ is above the texture activation threshold, the app adds arpeggio-like events. If it is above the fast threshold, the arpeggio rate doubles.
+
+A separate percussion-like tick layer activates when $\rho_{\mathrm{tex}}$ exceeds the percussion activation threshold. These ticks are short events placed on MIDI percussion channel 9 in the MIDI export.
+
+### 12.5 Saliency solo layer
+
+The solo layer is available in GeneralUser GS mode. It selects salient points in the image and converts their positions to time and pitch.
+
+A saliency strength score is:
+
+$$
+\eta=\operatorname{clip}\bigl(0.55\,\text{peak}+0.25\,\text{mean}+0.20(1-\text{area}),0,1\bigr)
+$$
+
+The number of solo notes is interpolated from a user-controlled note-count range, then limited by the Solo note cap. Candidate points are selected from the strongest saliency pixels, with a minimum distance constraint so that notes do not all collapse onto the same visual region.
+
+The horizontal coordinate becomes time:
+
+$$
+t_k=x_k^{\mathrm{norm}}T_{\mathrm{dur}}+0.10\Delta t\sin(1.7k)
+$$
+
+The vertical coordinate becomes pitch:
+
+$$
+m_k=\operatorname{melody\_notes}\left[\operatorname{round}\bigl((1-y_k^{\mathrm{norm}})(N_{\mathrm{mel}}-1)\bigr)\right]+12
+$$
+
+The solo therefore behaves like a sparse melodic reading of the most visually important image regions.
 
 ---
 
-## 11. Automatic and Manual Instrument Selection
+## 13. Instrument Selection
 
-### 10.1 Simple Synthesizer Mode
+### 13.1 Simple mode
 
-In Simple mode, instruments are chosen from a fixed palette of 15 internally synthesized timbres using explicit feature threshold rules. For example:
+Simple mode uses internal additive synthesis instruments such as soft piano, harp, music box, bright bell, marimba, cello-like bass, warm pad and glass pad. It is fully self-contained and does not require a SoundFont.
 
-- Main layer: bright bell if $h > 0.14$ and $E_{\mathrm{high}} > 0.28$; celesta if $\mu_Y > 0.64$; kalimba if $P > 0.58$; marimba if $P > 0.48$; harp if warm and saturated; soft piano otherwise.
-- Pad layer: warm pad if low-frequency energy is strong and the image is warm, or if shadows are prevalent; glass pad otherwise.
+In Automatic mode, the app chooses instruments using explicit feature rules. For example, bright images with many highlights favor bells or celesta; periodic images favor kalimba or marimba; dark smooth images favor cello-like bass, bowed strings or pads.
 
-### 10.2 GeneralUser GS Mode: GM Family Scoring
+### 13.2 GeneralUser GS mode
 
-In GeneralUser GS mode, each layer selects from the full 128 General MIDI programs. Selection uses a continuous affinity scoring system. Each GM program belongs to one of 16 families (piano, chromatic percussion, organ, guitar, bass, solo strings, ensemble, brass, reed, pipe, synth lead, synth pad, synth FX, ethnic, percussive, sound FX). A family weight $W_{\ell}(f)$ is defined for each layer $\ell$ and family $f$ as a linear combination of visual feature scalars:
+GeneralUser GS mode uses the 128 General MIDI program names. Rendering requires FluidSynth and a GeneralUser GS SoundFont. If they are not available, the app falls back to the Simple synthesis backend while keeping the musical event structure.
 
-For example, for the main layer, the piano family weight is:
+Each General MIDI program belongs to a family such as piano, chromatic percussion, organ, guitar, bass, strings, brass, reed, pipe, synth lead or synth pad. For each layer, the app assigns a score to each family using image features.
 
-$$
-W_{\mathrm{main}}(\mathrm{piano}) = 0.35 + 0.35\,\lambda_{\mathrm{smooth}}
-$$
-
-where $\lambda_{\mathrm{smooth}} = \operatorname{clip}(E_{\mathrm{low}} + 0.35(1-E_{\mathrm{high}}) + 0.25\,S, 0, 1)$ is a smoothness score derived from Fourier energy and symmetry. The pipe family weight for the main layer is:
+For example, a smoothness score is:
 
 $$
-W_{\mathrm{main}}(\mathrm{pipe}) = 0.18 + 0.45\,\lambda_{\mathrm{bright}} + 0.20\,\lambda_{\mathrm{smooth}}
+\lambda_{\mathrm{smooth}}=\operatorname{clip}(E_{\mathrm{low}}+0.35(1-E_{\mathrm{high}})+0.25S,0,1)
 $$
 
-with $\lambda_{\mathrm{bright}} = \operatorname{clip}(0.55\,\mu_Y + 0.45\,h, 0, 1)$.
-
-For individual programs within a family, additional fine-grained bonuses are added: for example, programs in the celesta/music-box group (8–14) gain a bonus proportional to highlight proportion, high Fourier energy and saliency peak.
-
-The final score of program $p$ for layer $\ell$ is:
+A brightness score is:
 
 $$
-\text{score}(p, \ell) = W_\ell(f_p) + \text{program bonus}(p) + 0.42\,u(p, \ell)
+\lambda_{\mathrm{bright}}=\operatorname{clip}(0.55\mu_Y+0.45h,0,1)
 $$
 
-where $u(p, \ell)$ is a deterministic pseudo-random jitter in $[0,1]$ derived from a SHA-256 hash of the feature vector. The jitter prevents the same few programs from being selected in every composition while keeping the selection reproducible for fixed inputs.
-
-### 10.3 Layer Gain
-
-The per-layer gain in decibels is applied to the velocity of every note event in that layer before audio rendering:
+For the main layer, piano affinity includes smoothness:
 
 $$
-g = 10^{G_{\mathrm{dB}} / 20}
+W_{\mathrm{main}}(\mathrm{piano})=0.35+0.35\lambda_{\mathrm{smooth}}
 $$
 
-Note velocities after gain application are clipped to $[0, 1]$.
+Pipe instruments receive brightness and smoothness contributions:
+
+$$
+W_{\mathrm{main}}(\mathrm{pipe})=0.18+0.45\lambda_{\mathrm{bright}}+0.20\lambda_{\mathrm{smooth}}
+$$
+
+Additional program-level bonuses are added. For instance, celesta, music box and bell-like programs receive bonuses from highlights, high-frequency energy and saliency peak. Bass programs receive bonuses from shadows and low-frequency energy.
+
+A deterministic pseudo-random jitter is added:
+
+$$
+\operatorname{score}(p,\ell)=W_\ell(f_p)+\operatorname{bonus}(p)+0.42u(p,\ell)
+$$
+
+where $u(p,\ell)$ is derived from a SHA-256 hash of the image features. This gives variety while remaining reproducible.
+
+### 13.3 Manual mode and gains
+
+In Manual instrument mode, the user chooses the instrument for each layer. Each layer also has a gain in decibels:
+
+$$
+g=10^{G_{\mathrm{dB}}/20}
+$$
+
+The gain multiplies note velocity before rendering. Velocities are clipped to $[0,1]$.
 
 ---
 
-## 12. Additive Synthesis and ADSR Envelopes
+## 14. Audio Rendering and Synthesis
 
-### 11.1 ADSR Model
+### 14.1 Event rendering
 
-Each note is shaped by an Attack–Decay–Sustain–Release envelope. Given a note of $n$ samples at sample rate $f_s$, the envelope is:
+The generated events are placed into a stereo buffer at sample rate $f_s=44100$ Hz. An event starting at time $t_i$ begins at sample:
 
 $$
-e[t] = \begin{cases}
-t / t_A & 0 \leq t < t_A \\
-1 - (1 - S_L)(t - t_A) / t_D & t_A \leq t < t_A + t_D \\
-S_L & t_A + t_D \leq t < n - t_R \\
-S_L \cdot (1 - (t - (n-t_R)) / t_R) & n - t_R \leq t < n
+n_i=\operatorname{round}(t_if_s)
+$$
+
+Each event waveform is synthesized, multiplied by its velocity, panned, and added to the buffer.
+
+### 14.2 Equal-power panning
+
+Each event has a pan value $p\in[-1,1]$. The stereo gains are:
+
+$$
+g_L=\cos\left(\frac{\pi}{4}(p+1)\right),
+\qquad
+g_R=\sin\left(\frac{\pi}{4}(p+1)\right)
+$$
+
+This is equal-power panning. It avoids a perceived loudness drop at the center.
+
+### 14.3 ADSR envelope
+
+Simple synthesis instruments use an Attack-Decay-Sustain-Release envelope:
+
+$$
+e[n]=
+\begin{cases}
+n/N_A, & 0\le n<N_A \\
+1-(1-S_L)(n-N_A)/N_D, & N_A\le n<N_A+N_D \\
+S_L, & N_A+N_D\le n<N-N_R \\
+S_L(1-(n-(N-N_R))/N_R), & N-N_R\le n<N
 \end{cases}
 $$
 
-where $t_A, t_D, t_R$ are the attack, decay and release sample counts, and $S_L \in (0,1]$ is the sustain level. The envelope is then multiplied element-wise by the instantaneous harmonic waveform.
+The envelope gives each note a more realistic amplitude shape than an abrupt rectangular window.
 
-### 11.2 Instrument Recipes
+### 14.4 Additive synthesis examples
 
-Each instrument uses a specific combination of harmonic content and envelope parameters.
-
-**Soft piano.** The waveform is a sum of harmonics with decreasing amplitudes:
+Soft piano uses harmonic partials:
 
 $$
-x[t] = \sum_{m \in \{1,2,3,4,5\}} a_m \sin(2\pi m f_0 t / f_s)
+x[n]=\sum_{m\in\{1,2,3,4,5\}}a_m\sin(2\pi mf_0n/f_s)
 $$
 
-with $(a_1, a_2, a_3, a_4, a_5) = (1, 0.42, 0.20, 0.10, 0.04)$. An exponential decay is applied on top of the ADSR: $e_{\mathrm{exp}}[t] = \exp(-2.7\, t / (n / f_s))$, modeling the natural decay of a struck string.
-
-**Bright bell / celesta / music box / kalimba.** These instruments use inharmonic partials whose frequency ratios deviate from integers to simulate the behavior of metallic bars or plates. For the bright bell:
+with amplitudes:
 
 $$
-(\text{ratios, amplitudes}) = \{(1, 1),\, (2.41, 0.55),\, (3.77, 0.30),\, (5.93, 0.16),\, (8.12, 0.06)\}
+(a_1,a_2,a_3,a_4,a_5)=(1,0.42,0.20,0.10,0.04)
 $$
 
-These non-integer ratios are characteristic of inharmonic spectra and produce the characteristic metallic or glassy timbre. The fast exponential decay ($\tau = 4.2$) reinforces the short sustain of physical bells.
-
-**Harp / marimba / synth pluck.** The harmonic series uses power-law amplitude decay:
-
-$$
-x[t] = \sum_{k=1}^{7} k^{-1.25} \sin(2\pi k f_0 t / f_s)
-$$
-
-The exponent $-1.25$ (between $-1$ for sawtooth and $-2$ for triangle) produces a moderately bright plucked timbre.
-
-**Warm pad / glass pad.** These instruments use vibrato, implemented as a continuous-phase oscillator with sinusoidal frequency modulation:
-
-$$
-\phi[t] = \frac{2\pi f_0}{f_s}\sum_{\tau=0}^{t}\!\bigl(1 + 0.0025\sin(2\pi \cdot 4.5\, \tau / f_s)\bigr)
-$$
-
-$$
-x[t] = 0.75\sin(\phi[t]) + 0.24\sin(2.01\,\phi[t]) + 0.12\sin(3.98\,\phi[t])
-$$
-
-The ADSR has a slow attack (up to 65% of note duration) and high sustain level (0.78), producing the characteristic slow swell.
-
-**Cello-like bass / bowed string.** Similar vibrato model with a higher modulation depth ($0.004$) and slightly faster rate ($5.1$ Hz):
-
-$$
-x[t] = 0.75\sin(\phi[t]) + 0.33\sin(2\phi[t]) + 0.17\sin(3\phi[t])
-$$
-
-The ADSR models the bow attack ($t_A = 0.07\,\text{s}$) and long sustain.
-
-**Clarinet-like reed.** The clarinet spectrum is dominated by odd harmonics. The waveform $x[t] = \sin(2\pi f_0 t) - 0.33\sin(6\pi f_0 t) + 0.17\sin(10\pi f_0 t)$ approximates this characteristic.
-
-After envelope application, each note is peak-normalized and multiplied by its velocity $v \in [0,1]$, so velocity controls amplitude without distorting the timbre.
+Bright bell, celesta and music box use inharmonic partials to create a metallic sound. Harp, marimba and synth pluck use a power-law harmonic decay. Pads and bowed strings use slow envelopes and a light vibrato model.
 
 ---
 
-## 13. Saliency-Driven Solo Layer
+## 15. Master Bus, Exports and Audio Analysis
 
-### 12.1 Motivation
+### 15.1 Master bus processing
 
-The solo layer, available only in GeneralUser GS mode, places a sparse set of accent notes at time positions and pitches derived directly from the saliency map. The idea is to make the most visually prominent features of the photograph audible as distinct melodic events, floating above the harmonic texture of the other layers.
+After all layers are mixed, the master bus is processed in three steps.
 
-### 12.2 Spatial Sampling of Salient Pixels
-
-A composite saliency strength scalar is first derived:
+First, the DC offset is removed from each channel:
 
 $$
-\eta = \operatorname{clip}\!\bigl(0.55\,\text{sal\_peak} + 0.25\,\text{sal\_mean} + 0.20\,(1 - \text{sal\_area}),\; 0,\; 1\bigr)
+x_{dc}[n]=x[n]-\frac{1}{N}\sum_{m=0}^{N-1}x[m]
 $$
 
-This combines peak intensity, spatial density and the inverse of salient area: a focused, intense region gives a high $\eta$, while a diffuse weakly salient image gives a low $\eta$.
-
-The number of solo notes is:
+Second, RMS level is limited. The stereo RMS is:
 
 $$
-N_{\mathrm{solo}} = \operatorname{clip}\!\bigl(\operatorname{round}(\operatorname{interp}(\eta,\,[0,1],\,[3,18])),\; 2,\; 22\bigr)
+\operatorname{RMS}=\sqrt{\frac{1}{2N}\sum_{n=0}^{N-1}\bigl(x_L[n]^2+x_R[n]^2\bigr)}
 $$
 
-The top-$N_{\mathrm{cand}}$ salient pixels (with $N_{\mathrm{cand}} = \max(64, 18 N_{\mathrm{solo}})$) are identified, then filtered with a spatial inhibition-of-return rule: two selected positions must be at least 5.5% of the image diagonal apart. This prevents the solo notes from clustering on a single small region.
+If it exceeds the target RMS, the signal is scaled down. Third, the peak level is limited to the target peak. A final safety clip prevents overflow.
 
-### 12.3 Time and Pitch Assignment
+The default target peak is 0.86 and the default target RMS is 0.16, but both are exposed in the Parameters panel.
 
-The horizontal position of each selected salient pixel is mapped to time:
+### 15.2 Export formats
 
-$$
-t_k = x_k^{\mathrm{norm}} \cdot T_{\mathrm{dur}} + 0.10\,\Delta t\,\sin(1.7\,k)
-$$
+The app exports:
 
-where $x_k^{\mathrm{norm}} \in [0,1]$ is the normalized horizontal coordinate, $T_{\mathrm{dur}}$ is the total composition duration and $\Delta t$ is the beat period. The small sinusoidal jitter prevents all notes from aligning to the horizontal pixel grid.
+| Export | Content |
+|---|---|
+| WAV playback | rendered stereo audio at 44100 Hz |
+| MP3 | compressed audio, generated with `lameenc` or `ffmpeg` if available |
+| MIDI | note events, tempo, channels and program changes |
 
-The vertical position maps to pitch height: high salient points (small $y^{\mathrm{norm}}$) produce higher pitches, consistently with the main melody convention:
-
-$$
-\text{note}_k = \text{melody\_notes}\!\left[\operatorname{round}\bigl((1 - y_k^{\mathrm{norm}})\,(N_{\mathrm{mel}} - 1)\bigr)\right] + 12
-$$
-
-The solo is transposed one octave above the main melody range ($+12$ semitones). Every fifth note gets an additional perfect fifth ($+7$ semitones), adding interval variety to the solo line.
-
-Note duration is proportional to saliency strength and saliency spread:
-
-$$
-d_k = \operatorname{clip}\!\bigl((0.32 + 0.70\,\mathcal{S}(y_k, x_k) + 0.20\,\sigma_{\mathcal{S}})\,\Delta t,\; 0.18\,\Delta t,\; 1.25\,\Delta t\bigr)
-$$
-
----
-
-## 14. Stereo Rendering and Equal-Power Panning
-
-### 13.1 Event-to-Sample Placement
-
-Each note event with start time $t_{\mathrm{start}}$ is placed at sample index $n_s = \operatorname{round}(t_{\mathrm{start}} \cdot f_s)$. The synthesized waveform of length $n_{\mathrm{note}} = \operatorname{round}(d \cdot f_s)$ samples is added to a pre-allocated stereo buffer of length $\lceil (T_{\mathrm{dur}} + 0.8) \cdot f_s \rceil$ samples. The 0.8-second tail allows for the release phase of long notes near the end of the composition.
-
-### 13.2 Equal-Power Panning
-
-Each note carries a pan value $p \in [-1, 1]$. The stereo gain is assigned using the standard equal-power panning law:
-
-$$
-g_L = \cos\!\left(\frac{\pi}{4}(p + 1)\right), \qquad g_R = \sin\!\left(\frac{\pi}{4}(p + 1)\right)
-$$
-
-For $p = -1$ (hard left): $g_L = 1, g_R = 0$. For $p = 0$ (center): $g_L = g_R = 1/\sqrt{2}$. For $p = +1$ (hard right): $g_L = 0, g_R = 1$. The equal-power law ensures that the perceived loudness remains constant as the pan position is swept from left to right, unlike a linear law which would produce a dip at the center.
-
-The pan values are derived from visual positions:
-- Main layer: panned toward the horizontal position of the bright centroid $c_x^{\mathrm{bright}}$, with a slow sinusoidal oscillation $\sin(0.37\,i)$ indexed by slice number $i$.
-- Bass layer: panned toward the shadow centroid $c_x^{\mathrm{shadow}}$.
-- Chord layer: panned toward the bright centroid with reduced swing.
-- Texture arpeggios: panned progressively from left to right as the arpeggio index increases.
-
----
-
-## 15. Master Bus Processing
-
-After all layers have been mixed into the stereo buffer, a master bus normalization stage is applied. It does not alter individual layer gains; it operates solely on the final stereo mix.
-
-**DC removal.** The mean value of each channel is subtracted:
-
-$$
-x_{\mathrm{dc}}[t] = x[t] - \frac{1}{N}\sum_{\tau=0}^{N-1} x[\tau]
-$$
-
-**RMS normalization.** The root-mean-square level across all samples and both channels is computed:
-
-$$
-\text{RMS} = \sqrt{\frac{1}{2N}\sum_{t=0}^{N-1}\!\bigl(x_L[t]^2 + x_R[t]^2\bigr)}
-$$
-
-If $\text{RMS} > \text{RMS}_{\mathrm{target}} = 0.16$, the signal is scaled down by $\text{RMS}_{\mathrm{target}} / \text{RMS}$.
-
-**Peak normalization.** If the resulting peak amplitude exceeds $\text{Peak}_{\mathrm{target}} = 0.86$, the signal is scaled by $\text{Peak}_{\mathrm{target}} / \max|x|$.
-
-**Safety limiter.** A final hard clip to $\pm 0.98$ prevents floating-point overflow from propagating into the audio format converter.
-
-This two-stage process (RMS then peak) ensures a consistent loudness level across compositions while preserving headroom for transients. A WAV file is written at 44100 Hz, 16-bit signed PCM, 2 channels. MP3 encoding uses an external codec if available.
-
----
-
-## 16. MIDI Export
-
-### 15.1 MIDI File Structure
-
-The MIDI export generates a single-track, format-0 MIDI file. The timing resolution is $\text{PPQ} = 480$ pulses per quarter note. This gives a tick rate of:
-
-$$
-\text{ticks/second} = \text{PPQ} \cdot T / 60
-$$
-
-where $T$ is the tempo in BPM. The tempo is stored in the file header as microseconds per quarter note:
-
-$$
-\mu_{\text{QPB}} = \operatorname{round}(60{,}000{,}000 / T)
-$$
-
-### 15.2 Channel Assignments
-
-Each layer is assigned a fixed MIDI channel:
+The MIDI export uses one track, 480 pulses per quarter note and fixed channels for the musical layers:
 
 | Layer | MIDI channel |
 |---|---|
@@ -869,79 +908,172 @@ Each layer is assigned a fixed MIDI channel:
 | Pad | 3 |
 | Chord | 4 |
 | Solo | 5 |
-| Percussion (texture tick) | 9 |
+| Percussion tick | 9 |
 
-Program change events are emitted before the first note of each channel, using the GM program number corresponding to the selected instrument. Channel 9 is the General MIDI percussion channel and does not receive program changes.
+### 15.3 Audio analysis plots
 
-### 15.3 Variable-Length Encoding
+The Audio analysis panel computes a one-sided Fourier magnitude for the full mix and for individual layers. For a mono signal $x[n]$, the magnitude is:
 
-MIDI delta times are encoded in the variable-length quantity (VLQ) format: the binary representation of the value is split into 7-bit groups, each stored in one byte with the most significant bit set to 1 for all bytes except the last. This allows encoding tick values up to $2^{28} - 1$ with at most 4 bytes, a compact scheme suited to sparse musical events.
+$$
+|X[k]|=\left|\sum_{n=0}^{N-1}x[n]e^{-j2\pi kn/N}\right|
+$$
+
+The frequency axis is:
+
+$$
+f_k=\frac{kf_s}{N}
+$$
+
+The layer plots are generated by re-rendering only the events from one layer. This helps verify that bass, pad, main melody, texture and chord layers occupy different spectral regions.
 
 ---
 
-## 17. Random Factor and Controlled Perturbations
+## 16. Random Factor
 
-The random factor $r \in [0, 100]$ adds controlled perturbations to the image and Fourier analysis used for composition generation. It does not replace the photo-based mapping by pure randomness.
+Random factor adds controlled perturbation to the analysis. It does not replace the image-based mapping with pure randomness.
 
-Define $\alpha = r / 100 \in [0,1]$. Two perturbation stages are applied before feature extraction:
-
-**RGB noise.** Additive Gaussian noise is injected into the normalized RGB image:
+Let:
 
 $$
-\tilde{R}(x,y) = \operatorname{clip}\!\bigl(R(x,y) + \eta_R(x,y),\; 0,\; 1\bigr), \qquad \eta_R \sim \mathcal{N}(0,\, \sigma_{\mathrm{img}}^2)
+\alpha=\frac{r}{100}
 $$
 
-with $\sigma_{\mathrm{img}} = 0.045\,\alpha^2$. The quadratic law means the perturbation is negligible for small $r$ and significant only for large $r$.
+where $r$ is the Random factor slider value.
 
-**Fourier magnitude noise.** After computing the 2D DFT, the magnitude is perturbed by a log-normal multiplicative factor:
+Spatial RGB noise is:
 
 $$
-|F'(u,v)| = |F(u,v)| \cdot \exp(\eta_{uv}), \qquad \eta_{uv} \sim \mathcal{N}(0,\, \sigma_{\mathrm{Fou}}^2)
+R'(x,y)=\operatorname{clip}(R(x,y)+\eta_R(x,y),0,1)
 $$
 
-with $\sigma_{\mathrm{Fou}} = 0.18\,\alpha^2$. The log-normal distribution ensures the magnitude remains strictly positive and that the perturbation is multiplicative rather than additive, which is the more natural model for spectral amplitude uncertainty.
+with:
 
-The photo analysis panel always displays the unperturbed analysis (computed with $r=0$) so that the visualization and metrics are not contaminated by the added noise.
+$$
+\eta_R\sim\mathcal{N}(0,\sigma_{img}^2),
+\qquad
+\sigma_{img}=c_{img}\alpha^2
+$$
 
-**Deterministic seeding.** For a given random factor value and uploaded image, the seed is derived from the SHA-256 hash of the image bytes and the random factor value. The same image and the same random factor always produce the same perturbation, so the system remains reproducible even in its stochastic mode.
+The default coefficient is $c_{img}=0.045$.
+
+Fourier magnitude noise is multiplicative:
+
+$$
+|F'(u,v)|=|F(u,v)|\exp(\eta_F(u,v))
+$$
+
+with:
+
+$$
+\eta_F\sim\mathcal{N}(0,\sigma_F^2),
+\qquad
+\sigma_F=c_F\alpha^2
+$$
+
+The default coefficient is $c_F=0.18$.
+
+The square law makes low random values subtle and high values more audible. The seed depends on the image hash, the random factor and the parameter signature, so a fixed image and fixed settings remain reproducible.
+
+The Photo analysis panel displays the unperturbed analysis maps. When Random factor is nonzero, the generated composition can use the perturbed analysis, but the displayed maps remain a clean reference for the original image.
 
 ---
 
-## 18. Audio Analysis Plots
+## 17. Parameter Reference
 
-The audio analysis panel displays the frequency content and time-domain waveform of the generated composition, broken down per layer. All frequency plots use the magnitude of the one-sided DFT:
+The Parameters box is organized into mini-pages, following the same style as the Audio Visualization app.
 
-$$
-|X[k]| = \left|\sum_{n=0}^{N-1} x[n]\, e^{-j2\pi kn/N}\right|, \qquad k = 0, 1, \ldots, \lfloor N/2 \rfloor
-$$
+### 17.1 Structure
 
-The horizontal axis is converted to frequency in Hz using $f_k = k \cdot f_s / N$.
+| Parameter | Default | Role |
+|---|---|---|
+| Number of bars | photo-adaptive | total duration in 4/4 bars |
+| Variation strength | photo-adaptive | second-half melodic and harmonic change |
+| Composition complexity | photo-adaptive | note density and texture activity |
+| Random factor | 0 | controlled perturbation of image/Fourier analysis |
+| Auto complexity range | 0.25-0.90 | maps texture entropy to complexity |
+| Auto variation range | 0.25-0.85 | maps $1-S$ to variation |
+| Auto min-bars range | 4-8 | low/high range for automatic minimum bar count |
+| Auto max-bars range | 12-24 | low/high range for automatic maximum bar count |
+| Auto default-bars range | 6-16 | low/high range for automatic default bar count |
+| Bar weights | 0.40 / 0.25 / 0.20 / 0.15 | relative role of texture, edges, high frequencies and periodicity |
 
-Available plots:
+### 17.2 Image analysis
 
-| Plot | Meaning |
-|---|---|
-| Full Fourier magnitude | global spectrum of the mixed stereo composition |
-| Waveform | time-domain amplitude envelope of the mix |
-| Main layer Fourier | spectral contribution of the melody |
-| Texture layer Fourier | spectral contribution of arpeggios and rhythmic events |
-| Bass layer Fourier | spectral contribution of the bass line |
-| Pad layer Fourier | spectral contribution of the atmospheric sustained layer |
-| Chord layer Fourier | spectral contribution of the harmonic hits |
-| Solo layer Fourier | spectral contribution of the saliency accent layer (GS mode) |
+| Parameter | Default | Role |
+|---|---|---|
+| Analysis max side | 512 px | maximum side length for feature extraction |
+| Spatial noise coefficient | 0.045 | strength of Random factor in RGB space |
+| Entropy histogram bins | 64 | resolution of texture entropy histogram |
+| Edge threshold percentile | 75% | adaptive edge threshold |
+| Minimum edge threshold | 0.08 | fixed lower bound for edge threshold |
+| Luminance percentile range | 5%-95% | dynamic range and shadow/highlight percentiles |
+| Shadow floor | 0.18 | minimum threshold for dark regions |
+| Shadow percentile offset | 0.03 | offset added to low luminance percentile |
+| Highlight floor | 0.82 | upper reference threshold for bright regions |
+| Highlight percentile offset | 0.03 | offset subtracted from high luminance percentile |
 
-Each per-layer plot is rendered by re-synthesizing only the note events belonging to that layer, mixed to mono, then computing the DFT. This allows an independent inspection of each layer's spectral content and verifies that bass events occupy low frequencies, texture events occupy mid-to-high frequencies, and pads occupy the low-mid band.
+### 17.3 Fourier and saliency
+
+| Parameter | Default | Role |
+|---|---|---|
+| DC exclusion radius | 0.025 | removes near-DC energy from Fourier descriptors |
+| Low/mid/high radial limits | 0.14 / 0.34 | separates spatial frequency bands |
+| Orientation bandwidth | 0.38 | angular width for horizontal/vertical energies |
+| Peak-score percentile range | 90%-99.7% | compares strong peaks to background power |
+| Peak-score log divisor | 5.0 | compresses periodic peak score |
+| Fourier noise coefficient | 0.18 | strength of Random factor in Fourier magnitude |
+| Saliency weights | 0.42 / 0.34 / 0.24 | edge, color rarity and luminance rarity contributions |
+| Center-bias weight | 0.12 | weight of central composition bias |
+| Saliency threshold percentile | 96% | selects strongest saliency regions |
+| Minimum saliency threshold | 0.20 | fixed lower bound for saliency mask |
+| Solo note-count range | 3-18 | maps saliency strength to solo note count |
+| Solo note cap | 22 | maximum number of solo notes |
+| Minimum saliency-point distance | 0.055 | prevents solo notes from clustering |
+| Solo duration range | 0.18-1.25 beats | duration clamp for solo notes |
+
+### 17.4 Tonality and tempo
+
+| Parameter | Default | Role |
+|---|---|---|
+| Scale | Automatic | choose or override the modal scale |
+| Mapping style | Scientific | tempo mapping formula |
+| Manual BPM | 90 | fixed tempo when Manual is selected |
+| Scientific BPM range | 48-152 | clamp range for Scientific formula |
+| Balanced BPM range | 56-132 | clamp range for Balanced formula |
+| Musical BPM range | 72-108 | clamp range for Musical formula |
+
+### 17.5 Synth and mix
+
+| Parameter | Default | Role |
+|---|---|---|
+| Synthesizer type | GeneralUser GS | rendering backend |
+| Instrument layer selection | Automatic | automatic or manual instrument choices |
+| Target peak | 0.86 | master peak limit |
+| Target RMS | 0.16 | master RMS limit |
+| Maximum render duration | 120 s | safety cap for long outputs |
+| FluidSynth master gain | 0.45 | gain sent to FluidSynth |
+| Chord double-hit high-frequency threshold | 0.22 | activates second chord hit per bar |
+| Melody density threshold | 0.52 | controls melody slice step |
+| Melody energy gate | 0.10 | skips very low-energy melody slices |
+| Texture activation threshold | 0.28 | activates arpeggio texture |
+| Percussion activation threshold | 0.18 | activates short tick events |
+
+### 17.6 Instruments
+
+In Manual instrument mode, the Instruments page lets the user select the instrument and gain for each layer. Gains are expressed in dB over the range $[-24,12]$ dB. In Automatic mode, this page displays the photo-selected instruments instead.
 
 ---
 
-## 19. Limitations and Interpretation
+## 18. Limitations
 
-**Semantic blindness.** The app extracts only measurable visual quantities: luminance, gradient magnitude, color statistics, spatial frequency content and saliency derived from color rarity and edge contrast. It has no representation of objects, scenes or semantics. An image of a calm forest and an abstract painting with similar brightness, edge density and color distribution will produce similar musical outputs. This is a fundamental consequence of using interpretable signal-processing features.
+The app is feature-based, not semantic. It does not know whether the photo contains a person, a landscape, a city or an abstract painting. Two different images with similar luminance, color, edge and Fourier statistics may produce similar music.
 
-**Resolution sensitivity.** Because the analysis uses the full uploaded resolution (up to the configurable `MAX_ANALYSIS_SIDE` limit), the mapping can be sensitive to camera noise, JPEG compression artifacts and small high-frequency textures. These may inflate the edge density and high-frequency Fourier energy, pushing the automatic tempo and complexity toward higher values. For photographs, downsampling to 512 pixels on the longest side (the default) is generally appropriate.
+The mapping is designed for interpretability, not for universal aesthetics. The scale choices, chord progressions and instrument affinities follow a Western tonal framework. They are explicit design choices, not general laws of visual music.
 
-**Synthetic instruments.** The Simple synthesizer uses lightweight additive recipes. They are not physically accurate models of real instruments. Their purpose is to keep the system lightweight, fully self-contained and explainable. The GeneralUser GS path uses a SoundFont rendered by FluidSynth and produces substantially more realistic timbres, but requires the SoundFont file and the FluidSynth system package to be installed.
+The Simple synthesizer is lightweight and explainable, but it is not a physical model of real instruments. GeneralUser GS mode gives more realistic timbres, but it depends on FluidSynth and a SoundFont.
 
-**Musical conventions.** The chord progression generator, scale selection rules and tempo formulas all encode aesthetic decisions specific to Western tonal music. The mapping is not universal and does not represent a unique or optimal correspondence between visual features and musical parameters. It is one explicit, reproducible and inspectable design choice among many possible alternatives.
+High-resolution noisy photos can produce high edge density and high Fourier energy, which may lead to fast and dense compositions. The analysis resize and threshold parameters are provided so the user can control this behavior.
+
+Random factor is deterministic for fixed settings, but it still changes the analysis used for composition. The displayed photo maps remain unperturbed so that the user can distinguish between the original visual analysis and the randomized composition behavior.
 
 ---
