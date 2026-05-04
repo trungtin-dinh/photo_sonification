@@ -28,7 +28,7 @@ try:
 except Exception:
     HEIF_SUPPORT = False
 
-APP_TITLE = "Photo Sonification Lab"
+APP_TITLE = "Photo Sonification"
 DEFAULT_SAMPLE_RATE = 44100
 MAX_ANALYSIS_SIDE = int(os.getenv("MAX_ANALYSIS_SIDE", "512"))
 MAX_RENDER_SECONDS = 120.0
@@ -1555,7 +1555,7 @@ def _output_stem(image_name: str, max_len: int = 22) -> str:
 
 def configure_page() -> None:
     st.set_page_config(
-        page_title="Photo Sonification Lab",
+        page_title="Photo Sonification",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
@@ -1817,7 +1817,7 @@ def render_app_tab() -> None:
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
-        '<div class="app-header"><span class="app-title">Photo Sonification Lab</span></div>'
+        '<div class="app-header"><span class="app-title">Photo Sonification</span></div>'
         '<div class="app-subtitle">'
         'Image analysis · Fourier feature extraction · Procedural music synthesis'
         '</div>',
