@@ -82,13 +82,13 @@ PORTFOLIO_LINKS = [
     {
         "platform": "CV FR",
         "label": "CV FR",
-        "url": "http://e.pc.cd/t2ly6alK",
+        "url": "https://e.pcloud.link/publink/show?code=XZX81iZss7g3iD9fGJXmPRRGSi7LBTvLcgX",
         "icon_url": "https://upload.wikimedia.org/wikipedia/commons/8/87/PDF_file_icon.svg",        
     },
     {
         "platform": "CV EN",
         "label": "CV EN",
-        "url": "http://e.pc.cd/KjMotalK",
+        "url": "https://e.pcloud.link/publink/show?code=XZ581iZBQvbu1mFKjziunF9lblghze8OXkk",
         "icon_url": "https://upload.wikimedia.org/wikipedia/commons/8/87/PDF_file_icon.svg",        
     },
 ]
