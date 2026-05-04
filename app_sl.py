@@ -1230,326 +1230,1003 @@ def split_sections(md: str) -> List[Tuple[str, str]]:
     return sections
 
 
-def set_doc_section(key: str, idx: int) -> None:
-    st.session_state[key] = idx
+
+# ============================================================
+# Documentation helpers  (title-based, matching audio_visualization)
+# ============================================================
+
+def _split_markdown_by_h2(text: str) -> "Dict[str, str]":
+    import re as _re
+    sections: Dict[str, str] = {}
+    for part in _re.split(r"(?m)^##\s+", text.strip()):
+        part = part.strip()
+        if not part:
+            continue
+        title = part.splitlines()[0].strip()
+        if title.lower() in {"table des matières", "table of contents"}:
+            continue
+        sections[title] = "## " + part
+    if not sections and text.strip():
+        sections["Documentation"] = text
+    return sections
 
 
-def render_doc(filename: str, state_key: str, missing: str) -> None:
-    md = read_markdown_document(filename)
-    if not md.strip():
-        st.warning(missing); return
-    sections = split_sections(md)
-    if not sections:
-        st.markdown(md); return
-    if state_key not in st.session_state: st.session_state[state_key] = 0
-    idx = max(0, min(int(st.session_state[state_key]), len(sections) - 1))
-    nav, content = st.columns([1.05, 2.05], gap="medium")
-    with nav:
-        for i, (title, _) in enumerate(sections):
-            st.button(title, key=f"{state_key}_{i}", type="primary" if i == idx else "secondary", width="stretch", on_click=set_doc_section, args=(state_key, i))
-    idx = max(0, min(int(st.session_state[state_key]), len(sections) - 1))
-    body = sections[idx][1].splitlines()
-    if body and body[0].startswith("## "):
-        body[0] = "# " + body[0][3:]
-    with content:
-        st.markdown("\n".join(body))
+def _load_doc(filename: str) -> str:
+    base = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+    for p in [os.path.join(base, filename), os.path.join(os.getcwd(), filename)]:
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as fh:
+                return fh.read()
+    return ""
 
 
-st.set_page_config(page_title=None, page_icon=None, layout="wide")
-st.markdown("""
-<style>
-.block-container { padding-top: 4.2rem; padding-bottom: 2.5rem; max-width: 1500px; }
-div[data-testid="stMetricValue"] { font-size: 1.12rem; }
-.column-title { font-size: 1.12rem; font-weight: 650; margin-bottom: 0.3rem; }
-div[data-testid="stExpander"] details { border-radius: 0.45rem; }
-div[data-testid="stButton"] > button { border-radius: 0.45rem; min-height: 2.35rem; white-space: normal; }
-div[data-testid="stButton"] > button[kind="primary"] { font-weight: 650; }
+DOC_FR_SECTIONS = _split_markdown_by_h2(_load_doc("documentation_fr.md"))
+DOC_EN_SECTIONS = _split_markdown_by_h2(_load_doc("documentation_en.md"))
+DOC_FR_TITLES   = list(DOC_FR_SECTIONS.keys())
+DOC_EN_TITLES   = list(DOC_EN_SECTIONS.keys())
 
-.portfolio-link-row {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 0.42rem;
-    min-height: 2.35rem;
-    margin: 0 0 -2.65rem 0;
-    padding-right: 0.15rem;
-    position: relative;
-    z-index: 20;
-}
 
-.portfolio-link,
-.portfolio-link:visited {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    height: 2rem !important;
-    border: 1px solid rgba(250, 250, 250, 0.22) !important;
-    border-radius: 0.45rem !important;
-    color: inherit !important;
-    text-decoration: none !important;
-    font-size: 0.80rem !important;
-    font-weight: 600 !important;
-    line-height: 1 !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    white-space: nowrap !important;
-    box-sizing: border-box !important;
-    overflow: hidden !important;
-}
+# ============================================================
+# Output filename helper
+# ============================================================
 
-.portfolio-link:hover {
-    border-color: rgb(255, 75, 75) !important;
-    color: rgb(255, 75, 75) !important;
-    background: rgba(255, 75, 75, 0.08) !important;
-    text-decoration: none !important;
-}
+def _output_stem(image_name: str, max_len: int = 22) -> str:
+    import re as _re
+    base = os.path.splitext(image_name or "photo")[0]
+    base = _re.sub(r"[^\w\-]", "_", base)[:max_len].strip("_") or "photo"
+    return f"photosono-{base}"
 
-.portfolio-link.icon-only,
-.portfolio-link.icon-only:visited {
-    width: 2rem !important;
-    min-width: 2rem !important;
-    max-width: 2rem !important;
-    padding: 0 !important;
-    gap: 0 !important;
-}
 
-.portfolio-link.with-label,
-.portfolio-link.with-label:visited {
-    width: auto !important;
-    padding: 0 0.58rem !important;
-    gap: 0.38rem !important;
-}
+# ============================================================
+# Page configuration & CSS  (identical tokens to audio_visualization)
+# ============================================================
 
-.portfolio-icon {
-    display: block !important;
-    width: 1.12rem !important;
-    height: 1.12rem !important;
-    min-width: 1.12rem !important;
-    max-width: 1.12rem !important;
-    object-fit: contain !important;
-    flex: 0 0 auto !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 0 !important;
-}
+def configure_page() -> None:
+    st.set_page_config(
+        page_title="Photo Sonification Lab",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            max-width: 100%;
+            padding-top: 2.75rem;
+            padding-left: 1.5rem;
+            padding-right: 1.5rem;
+            padding-bottom: 2.5rem;
+        }
+        .app-header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.75rem;
+            margin-bottom: 0.15rem;
+        }
+        .app-title {
+            font-weight: 800;
+            font-size: 1.65rem;
+            letter-spacing: -0.02em;
+            line-height: 1;
+            color: inherit;
+        }
+        .app-subtitle {
+            font-size: 0.72rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #9ca3af;
+            margin-bottom: 1.1rem;
+            margin-top: 0.1rem;
+        }
+        h2 {
+            text-align: center;
+            border: 1px solid rgba(255, 75, 75, 0.18);
+            border-radius: 0.35rem;
+            padding: 0.55rem 0.75rem;
+            margin-top: 0.25rem;
+            margin-bottom: 1.00rem;
+            background: rgba(255, 75, 75, 0.04);
+        }
+        div[data-testid="stTabs"] [role="tablist"] {
+            margin-top: 0;
+            gap: 0.3rem;
+            border-bottom: 1px solid rgba(255, 75, 75, 0.15);
+            padding-bottom: 0;
+        }
+        div[data-testid="stTabs"] button[role="tab"] {
+            padding: 0.45rem 1.0rem;
+            border-radius: 0.35rem 0.35rem 0 0;
+        }
+        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+            color: #FF4B4B !important;
+            border-bottom: 2px solid #FF4B4B !important;
+        }
+        div[data-testid="stButton"] > button {
+            border-radius: 0.35rem;
+            min-height: 2.5rem;
+            white-space: normal;
+            text-align: center;
+            transition: all 0.15s ease;
+        }
+        div[data-testid="stButton"] > button[kind="primary"] {
+            font-weight: 700;
+            letter-spacing: 0.03em;
+        }
+        div[data-testid="stButton"] > button[kind="primary"]:not([disabled]):hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(255, 75, 75, 0.35);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 0.45rem !important;
+        }
+        div[data-testid="stExpander"] summary {
+            font-weight: 700;
+            font-size: 0.9rem;
+            letter-spacing: 0.04em;
+        }
+        .small-muted {
+            color: #9ca3af;
+            font-size: 0.80rem;
+            line-height: 1.5;
+        }
+        .result-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem 1.2rem;
+            margin-top: 0.6rem;
+        }
+        .result-meta-item {
+            font-size: 0.78rem;
+            color: #9ca3af;
+        }
+        .result-meta-item span {
+            color: #FF4B4B;
+            font-weight: 600;
+        }
+        .section-pill {
+            display: inline-block;
+            font-size: 0.70rem;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            background: rgba(255, 75, 75, 0.10);
+            border: 1px solid rgba(255, 75, 75, 0.22);
+            border-radius: 0.25rem;
+            padding: 0.1rem 0.45rem;
+            color: #FF4B4B;
+            margin-bottom: 0.4rem;
+        }
+        .param-group-label {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #9ca3af;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 75, 75, 0.12);
+            padding-bottom: 0.3rem;
+        }
+        .portfolio-link-row {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 0.42rem;
+            min-height: 2.35rem;
+            margin: 0 0 -2.65rem 0;
+            padding-right: 0.15rem;
+            position: relative;
+            z-index: 20;
+        }
+        .portfolio-link,
+        .portfolio-link:visited {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            height: 2rem !important;
+            border: 1px solid rgba(250, 250, 250, 0.18) !important;
+            border-radius: 0.35rem !important;
+            color: inherit !important;
+            text-decoration: none !important;
+            font-size: 0.78rem !important;
+            font-weight: 600 !important;
+            line-height: 1 !important;
+            background: rgba(255, 255, 255, 0.025) !important;
+            white-space: nowrap !important;
+            box-sizing: border-box !important;
+            overflow: hidden !important;
+            transition: all 0.15s ease !important;
+        }
+        .portfolio-link:hover {
+            border-color: #FF4B4B !important;
+            color: #FF4B4B !important;
+            background: rgba(255, 75, 75, 0.08) !important;
+            text-decoration: none !important;
+            transform: translateY(-1px) !important;
+        }
+        .portfolio-link.icon-only,
+        .portfolio-link.icon-only:visited {
+            width: 2rem !important; min-width: 2rem !important;
+            max-width: 2rem !important; padding: 0 !important; gap: 0 !important;
+        }
+        .portfolio-link.with-label,
+        .portfolio-link.with-label:visited {
+            width: auto !important; padding: 0 0.58rem !important; gap: 0.38rem !important;
+        }
+        .portfolio-icon {
+            display: block !important;
+            width: 1.10rem !important; height: 1.10rem !important;
+            min-width: 1.10rem !important; max-width: 1.10rem !important;
+            object-fit: contain !important; flex: 0 0 auto !important;
+            margin: 0 !important; padding: 0 !important; border: 0 !important;
+        }
+        .portfolio-label { display: inline-block !important; }
+        .portfolio-link.icon-only .portfolio-label {
+            display: none !important; width: 0 !important;
+            min-width: 0 !important; max-width: 0 !important;
+            margin: 0 !important; padding: 0 !important; overflow: hidden !important;
+        }
+        @media (max-width: 1180px) {
+            .portfolio-link-row {
+                justify-content: flex-start;
+                flex-wrap: wrap;
+                margin-bottom: 0.65rem;
+                padding-right: 0;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-.portfolio-label {
-    display: inline-block !important;
-}
 
-.portfolio-link.icon-only .portfolio-label {
-    display: none !important;
-    width: 0 !important;
-    min-width: 0 !important;
-    max-width: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-}
+# ============================================================
+# Session state
+# ============================================================
 
-@media (max-width: 1180px) {
-    .portfolio-link-row {
-        justify-content: flex-start;
-        flex-wrap: wrap;
-        margin-bottom: 0.65rem;
-        padding-right: 0;
+def init_session_state() -> None:
+    defaults: Dict[str, object] = {
+        "generation_result":       None,
+        "parameter_defaults":      None,
+        "photo_analysis_cache":    None,
+        "run_in_progress":         False,
+        "run_requested":           False,
+        "last_run_status":         None,
+        "doc_fr_title": DOC_FR_TITLES[0] if DOC_FR_TITLES else "",
+        "doc_en_title": DOC_EN_TITLES[0] if DOC_EN_TITLES else "",
     }
-}
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-</style>
-""", unsafe_allow_html=True)
+def request_run() -> None:
+    """Lock the Run button and mark a run as pending (on_click callback)."""
+    st.session_state.run_requested  = True
+    st.session_state.run_in_progress = True
+    st.session_state.last_run_status = None
 
-render_portfolio_links()
 
-app_tab, doc_fr_tab, doc_en_tab = st.tabs(["App", "Documentation FR", "Documentation EN"])
-for key, default in {"generation_result": None, "generation_message": None, "generation_message_type": None, "parameter_defaults": None, "photo_analysis_cache": None}.items():
-    if key not in st.session_state: st.session_state[key] = default
+# ============================================================
+# Documentation tab renderer
+# ============================================================
 
-with app_tab:
-    input_col, analysis_col, output_col = st.columns([1.0, 1.45, 1.05], gap="large")
-    uploaded_bytes = None; uploaded_image = None; uploaded_hash = None; upload_error = None; input_name = DEFAULT_IMAGE_NAME; input_is_default = False
+def _set_doc_section(state_key: str, title: str) -> None:
+    st.session_state[state_key] = title
+
+
+def render_documentation_tab(
+    titles: List[str], sections: Dict[str, str], state_key: str
+) -> None:
+    if not titles:
+        st.warning("Documentation file not found.")
+        return
+    if st.session_state.get(state_key) not in sections:
+        st.session_state[state_key] = titles[0]
+    left_col, right_col = st.columns([1, 3], gap="large")
+    with left_col:
+        for title in titles:
+            st.button(
+                title,
+                key=f"{state_key}_{title}",
+                type="primary" if st.session_state[state_key] == title else "secondary",
+                width="stretch",
+                on_click=_set_doc_section,
+                args=(state_key, title),
+            )
+    with right_col:
+        st.markdown(sections[st.session_state[state_key]])
+
+
+# ============================================================
+# App tab
+# ============================================================
+
+def render_app_tab() -> None:
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div class="app-header"><span class="app-title">Photo Sonification Lab</span></div>'
+        '<div class="app-subtitle">'
+        'Image analysis · Fourier feature extraction · Procedural music synthesis'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Pre-declare mutable variables (filled inside the input_col with-block) ─
+    uploaded_bytes:   Optional[bytes]        = None
+    uploaded_image:   Optional[Image.Image]  = None
+    uploaded_hash:    Optional[str]          = None
+    upload_error:     Optional[str]          = None
+    input_name:       str                    = DEFAULT_IMAGE_NAME
+    input_is_default: bool                   = False
+
+    # =========================================================================
+    # Row 1:  input column  |  output column
+    # =========================================================================
+    input_col, output_col = st.columns([1.0, 1.35], gap="large")
+
+    # ── Input column ──────────────────────────────────────────────────────────
     with input_col:
-        st.markdown("<div class='column-title'>Input photo</div>", unsafe_allow_html=True)
-        uploaded = st.file_uploader("Input photo", type=SUPPORTED_IMAGE_TYPES, accept_multiple_files=False, label_visibility="collapsed")
-        if uploaded is not None:
-            try:
-                uploaded_bytes = uploaded.getvalue(); uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest(); uploaded_image = open_image_from_bytes(uploaded_bytes, uploaded.name); input_name = uploaded.name
-                st.image(uploaded_image, width="stretch")
-            except Exception as exc:
-                upload_error = str(exc); st.error(f"Could not read this image: {exc}")
-        else:
-            try:
-                uploaded_bytes = load_image_bytes_from_url(DEFAULT_IMAGE_URL); uploaded_hash = hashlib.sha256(uploaded_bytes).hexdigest(); uploaded_image = open_image_from_bytes(uploaded_bytes, DEFAULT_IMAGE_URL); input_is_default = True
-                st.image(uploaded_image, width="stretch"); st.caption(DEFAULT_IMAGE_CAPTION)
-            except Exception as exc:
-                upload_error = str(exc); st.info("The default test image could not be loaded. Please load a photo here.")
-
-    parameter_defaults = st.session_state.get("parameter_defaults")
-    controls_active = uploaded_hash is not None and isinstance(parameter_defaults, dict) and parameter_defaults.get("image_id") == uploaded_hash
-    if uploaded_hash is None or not (isinstance(st.session_state.get("photo_analysis_cache"), dict) and st.session_state["photo_analysis_cache"].get("image_id") == uploaded_hash):
-        st.session_state["photo_analysis_cache"] = None
-    if not controls_active:
-        for k in ["mapping_style", "scale_selection", "synthesizer_type"]:
-            st.session_state.pop(k, None)
-    if controls_active:
-        bar_min, bar_max, bar_default = int(parameter_defaults["bar_min"]), int(parameter_defaults["bar_max"]), int(parameter_defaults["bar_default"])
-        variation_default, complexity_default = float(parameter_defaults["variation_default"]), float(parameter_defaults["complexity_default"])
-    else:
-        bar_min, bar_max, bar_default = 4, 24, 8; variation_default, complexity_default = .55, .72
-
-    with analysis_col:
-        with st.expander("Audio output parameters", expanded=False):
-            if not controls_active:
-                st.info("Click Run to analyze the photo and activate the parameters." if uploaded_image is not None else "Load a photo, then click Run to analyze it and activate the parameters.")
-            a, bcol = st.columns(2, gap="large")
-            with a:
-                number_of_bars = st.slider("Number of bars", bar_min, bar_max, bar_default, 1, disabled=not controls_active)
-                variation_strength = st.slider("Variation strength", 0.0, 1.0, variation_default, 0.01, help="Default value is computed from image symmetry.", disabled=not controls_active)
-            with bcol:
-                complexity = st.slider("Composition complexity", 0.10, 1.00, complexity_default, 0.01, help="Default value is computed from texture entropy.", disabled=not controls_active)
-                random_factor = st.slider("Random factor", 0, 100, 0, 1, help="Adds controlled perturbation to the image and Fourier-domain analysis.", disabled=not controls_active)
-            sc, mp = st.columns(2, gap="large")
-            with sc:
-                current_scale = st.session_state.get("scale_selection", "Automatic")
-                if current_scale not in SCALE_OPTIONS: current_scale = "Automatic"
-                requested_scale = st.selectbox("Scale", SCALE_OPTIONS, index=SCALE_OPTIONS.index(current_scale), key="scale_selection", disabled=not controls_active)
-            with mp:
-                mapping_options = ["Scientific", "Balanced", "Musical", "Manual"]
-                cur_map = st.session_state.get("mapping_style", "Scientific")
-                if cur_map not in mapping_options: cur_map = "Scientific"
-                manual_tempo_bpm = None
-                if cur_map == "Manual":
-                    m1, m2 = st.columns(2, gap="medium")
-                    with m1: mapping_style = st.selectbox("Mapping style (BPM)", mapping_options, index=mapping_options.index(cur_map), key="mapping_style", disabled=not controls_active)
-                    with m2: manual_tempo_bpm = st.number_input("Manual BPM", min_value=1.0, value=90.0, step=1.0, format="%.1f", disabled=not controls_active)
-                else:
-                    mapping_style = st.selectbox("Mapping style (BPM)", mapping_options, index=mapping_options.index(cur_map), key="mapping_style", disabled=not controls_active)
-            cur_synth = st.session_state.get("synthesizer_type", SYNTH_GENERALUSER_GS)
-            if cur_synth not in SYNTHESIZER_OPTIONS: cur_synth = SYNTH_GENERALUSER_GS
-            synthesizer_type = st.radio("Synthesizer type", SYNTHESIZER_OPTIONS, index=SYNTHESIZER_OPTIONS.index(cur_synth), horizontal=True, key="synthesizer_type", disabled=not controls_active)
-            instrument_mode = st.radio("Instrument layer selection", ["Automatic", "Manual"], index=0, horizontal=True, disabled=not controls_active)
-            choices = get_instrument_choices_with_none(synthesizer_type)
-            fallback = choices[1] if len(choices) > 1 else "None"
-            if controls_active and isinstance(st.session_state.get("photo_analysis_cache"), dict):
-                fdef: Dict[str, float] = st.session_state["photo_analysis_cache"]["analysis"]["features"]  # type: ignore[assignment]
-                ai = choose_instruments(fdef, "Automatic", synthesizer_type)
-                defaults = [instrument_label(x) if x.startswith("gm_") else SIMPLE_INTERNAL_TO_DISPLAY.get(x, fallback) for x in ai]
+        with st.container(border=True):
+            st.markdown("#### Input photo")
+            uploaded = st.file_uploader(
+                "Input photo",
+                type=SUPPORTED_IMAGE_TYPES,
+                accept_multiple_files=False,
+                label_visibility="collapsed",
+            )
+            if uploaded is not None:
+                try:
+                    uploaded_bytes = uploaded.getvalue()
+                    uploaded_hash  = hashlib.sha256(uploaded_bytes).hexdigest()
+                    uploaded_image = open_image_from_bytes(uploaded_bytes, uploaded.name)
+                    input_name     = uploaded.name
+                    st.image(uploaded_image, width="stretch")
+                except Exception as exc:
+                    upload_error = str(exc)
+                    st.error(f"Could not read this image: {exc}")
             else:
-                defaults = ["Acoustic Grand Piano", "Orchestral Harp", "Cello", "Pad 2 (warm)", "Acoustic Grand Piano", "Flute"] if synthesizer_type == SYNTH_GENERALUSER_GS else ["Soft piano", "Harp", "Cello-like bass", "Warm pad", "Soft piano", "None"]
+                try:
+                    uploaded_bytes   = load_image_bytes_from_url(DEFAULT_IMAGE_URL)
+                    uploaded_hash    = hashlib.sha256(uploaded_bytes).hexdigest()
+                    uploaded_image   = open_image_from_bytes(uploaded_bytes, DEFAULT_IMAGE_URL)
+                    input_is_default = True
+                    st.image(uploaded_image, width="stretch")
+                    st.markdown(
+                        f'<p class="small-muted">{DEFAULT_IMAGE_CAPTION}</p>',
+                        unsafe_allow_html=True,
+                    )
+                except Exception as exc:
+                    upload_error = str(exc)
+                    st.info("The default test image could not be loaded. Please upload a photo.")
+
+            st.markdown("")
+            st.button(
+                "▶  GENERATE AUDIO",
+                type="primary",
+                width="stretch",
+                disabled=(
+                    uploaded_image is None
+                    or st.session_state.run_in_progress
+                ),
+                on_click=request_run,
+            )
+
+    # ── Derive controls_active AFTER input_col (uploaded_hash is now set) ─────
+    parameter_defaults = st.session_state.get("parameter_defaults")
+    controls_active = (
+        uploaded_hash is not None
+        and isinstance(parameter_defaults, dict)
+        and parameter_defaults.get("image_id") == uploaded_hash
+    )
+    if not controls_active:
+        for _k in ["mapping_style", "scale_selection", "synthesizer_type"]:
+            st.session_state.pop(_k, None)
+    if uploaded_hash is None or not (
+        isinstance(st.session_state.get("photo_analysis_cache"), dict)
+        and st.session_state["photo_analysis_cache"].get("image_id") == uploaded_hash
+    ):
+        st.session_state["photo_analysis_cache"] = None
+
+    if controls_active:
+        bar_min            = int(parameter_defaults["bar_min"])
+        bar_max            = int(parameter_defaults["bar_max"])
+        bar_default        = int(parameter_defaults["bar_default"])
+        variation_default  = float(parameter_defaults["variation_default"])
+        complexity_default = float(parameter_defaults["complexity_default"])
+    else:
+        bar_min, bar_max, bar_default = 4, 24, 8
+        variation_default, complexity_default = 0.55, 0.72
+
+    # Validate stored result against current image
+    result = st.session_state.get("generation_result")
+    if not (
+        uploaded_hash is not None
+        and isinstance(result, dict)
+        and result.get("image_id") == uploaded_hash
+    ):
+        result = None
+
+    # ── Output column ─────────────────────────────────────────────────────────
+    with output_col:
+        with st.container(border=True):
+            st.markdown("#### Output audio")
+
+            # Progress placeholders — updated live during computation below
+            progress_status_placeholder = st.empty()
+            progress_bar_placeholder    = st.empty()
+
+            if st.session_state.last_run_status == "Done":
+                progress_status_placeholder.success("Done — 100%")
+
+            if result is None:
+                st.info(
+                    "Generated audio will appear here after you click **▶ Generate Audio**."
+                )
+                st.download_button(
+                    "⬇  Download MP3",
+                    data=b"",
+                    file_name="photosono.mp3",
+                    mime="audio/mpeg",
+                    disabled=True,
+                    width="stretch",
+                )
+                st.download_button(
+                    "⬇  Download MIDI",
+                    data=b"",
+                    file_name="photosono.mid",
+                    mime="audio/midi",
+                    disabled=True,
+                    width="stretch",
+                )
+            else:
+                info_r: CompositionInfo = result["info"]
+                stem = _output_stem(result.get("image_name", input_name))
+
+                st.audio(result["wav_bytes"], format="audio/wav")
+
+                meta_html = (
+                    '<div class="result-meta">'
+                    f'<div class="result-meta-item">Tempo <span>{info_r.tempo:.1f} BPM</span></div>'
+                    f'<div class="result-meta-item">Length <span>{info_r.bars} bars / {info_r.duration:.1f} s</span></div>'
+                    f'<div class="result-meta-item">Key / scale <span>{info_r.key_name} / {info_r.scale_name}</span></div>'
+                    f'<div class="result-meta-item">Mood <span>{info_r.mood}</span></div>'
+                    '</div>'
+                )
+                st.markdown(meta_html, unsafe_allow_html=True)
+                st.markdown("")
+
+                st.markdown('<div class="section-pill">Instruments</div>', unsafe_allow_html=True)
+                inst_line = (
+                    f"Main · {instrument_label(info_r.main_instrument)} &nbsp; "
+                    f"Texture · {instrument_label(info_r.texture_instrument)} &nbsp; "
+                    f"Bass · {instrument_label(info_r.bass_instrument)} &nbsp; "
+                    f"Pad · {instrument_label(info_r.pad_instrument)} &nbsp; "
+                    f"Chord · {instrument_label(info_r.chord_instrument)}"
+                )
+                if info_r.solo_instrument != "none":
+                    inst_line += f" &nbsp; Solo · {instrument_label(info_r.solo_instrument)}"
+                st.markdown(f'<p class="small-muted">{inst_line}</p>', unsafe_allow_html=True)
+
+                synth_msg = result.get("synth_message", "")
+                if synth_msg:
+                    st.markdown(
+                        f'<p class="small-muted"><em>{synth_msg}</em></p>',
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("")
+
+                st.download_button(
+                    "⬇  Download MP3",
+                    data=ensure_bytes(result["mp3_bytes"]),
+                    file_name=f"{stem}.mp3",
+                    mime="audio/mpeg",
+                    disabled=result["mp3_bytes"] is None,
+                    width="stretch",
+                )
+                st.download_button(
+                    "⬇  Download MIDI",
+                    data=ensure_bytes(result["midi_bytes"]),
+                    file_name=f"{stem}.mid",
+                    mime="audio/midi",
+                    width="stretch",
+                )
+                if result["mp3_bytes"] is None:
+                    st.markdown(
+                        f'<p class="small-muted">{result.get("mp3_message", "MP3 export unavailable.")}</p>',
+                        unsafe_allow_html=True,
+                    )
+
+    # =========================================================================
+    # Row 2:  ⚙  Parameters  (tabs, full width, same structure as audio_visualization)
+    # =========================================================================
+    with st.expander("⚙  Parameters", expanded=False):
+        if not controls_active:
+            st.info(
+                "Click **▶ Generate Audio** to analyse the photo and unlock the parameters."
+                if uploaded_image is not None
+                else "Upload a photo first, then click **▶ Generate Audio** to unlock the parameters."
+            )
+
+        tab_struct, tab_tonal, tab_synth, tab_inst = st.tabs([
+            "Structure",
+            "Tonality & Tempo",
+            "Synthesizer",
+            "Instruments",
+        ])
+
+        # ── Tab 1 · Structure ────────────────────────────────────────────────
+        with tab_struct:
+            s_left, s_right = st.columns(2, gap="large")
+            with s_left:
+                with st.container(border=True):
+                    st.markdown(
+                        '<div class="param-group-label">Musical shape</div>',
+                        unsafe_allow_html=True,
+                    )
+                    number_of_bars = st.slider(
+                        "Number of bars",
+                        bar_min, bar_max, bar_default, 1,
+                        disabled=not controls_active,
+                        help="Total length of the composition in 4/4 bars.",
+                    )
+                    variation_strength = st.slider(
+                        "Variation strength",
+                        0.0, 1.0, variation_default, 0.01,
+                        disabled=not controls_active,
+                        help="Default derived from image symmetry. Controls how much the second half diverges from the first.",
+                    )
+            with s_right:
+                with st.container(border=True):
+                    st.markdown(
+                        '<div class="param-group-label">Density & randomness</div>',
+                        unsafe_allow_html=True,
+                    )
+                    complexity = st.slider(
+                        "Composition complexity",
+                        0.10, 1.00, complexity_default, 0.01,
+                        disabled=not controls_active,
+                        help="Default derived from texture entropy. Controls note density and arpeggio activity.",
+                    )
+                    random_factor = st.slider(
+                        "Random factor",
+                        0, 100, 0, 1,
+                        disabled=not controls_active,
+                        help="Adds controlled perturbation to the image and Fourier-domain analysis before composition.",
+                    )
+
+        # ── Tab 2 · Tonality & Tempo ─────────────────────────────────────────
+        with tab_tonal:
+            t_left, t_right = st.columns(2, gap="large")
+            with t_left:
+                with st.container(border=True):
+                    st.markdown(
+                        '<div class="param-group-label">Tonal center</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _cur_scale = st.session_state.get("scale_selection", "Automatic")
+                    if _cur_scale not in SCALE_OPTIONS:
+                        _cur_scale = "Automatic"
+                    requested_scale = st.selectbox(
+                        "Scale",
+                        SCALE_OPTIONS,
+                        index=SCALE_OPTIONS.index(_cur_scale),
+                        key="scale_selection",
+                        disabled=not controls_active,
+                        help="Automatic lets the image brightness, warmth and saturation choose the mode.",
+                    )
+            with t_right:
+                with st.container(border=True):
+                    st.markdown(
+                        '<div class="param-group-label">Tempo mapping</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _mapping_opts = ["Scientific", "Balanced", "Musical", "Manual"]
+                    _cur_map = st.session_state.get("mapping_style", "Scientific")
+                    if _cur_map not in _mapping_opts:
+                        _cur_map = "Scientific"
+                    manual_tempo_bpm: Optional[float] = None
+                    mapping_style = st.selectbox(
+                        "Mapping style (BPM)",
+                        _mapping_opts,
+                        index=_mapping_opts.index(_cur_map),
+                        key="mapping_style",
+                        disabled=not controls_active,
+                        help=(
+                            "Scientific: uses edge density, contrast, Fourier centroid and shadow proportion.\n"
+                            "Balanced: softer version of Scientific.\n"
+                            "Musical: uses perceptual colour attributes only.\n"
+                            "Manual: enter a fixed BPM below."
+                        ),
+                    )
+                    if mapping_style == "Manual":
+                        manual_tempo_bpm = st.number_input(
+                            "Manual BPM",
+                            min_value=1.0,
+                            value=90.0,
+                            step=1.0,
+                            format="%.1f",
+                            disabled=not controls_active,
+                        )
+
+        # ── Tab 3 · Synthesizer ──────────────────────────────────────────────
+        with tab_synth:
+            sy_left, sy_right = st.columns(2, gap="large")
+            with sy_left:
+                with st.container(border=True):
+                    st.markdown(
+                        '<div class="param-group-label">Engine</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _cur_synth = st.session_state.get("synthesizer_type", SYNTH_GENERALUSER_GS)
+                    if _cur_synth not in SYNTHESIZER_OPTIONS:
+                        _cur_synth = SYNTH_GENERALUSER_GS
+                    synthesizer_type = st.radio(
+                        "Synthesizer type",
+                        SYNTHESIZER_OPTIONS,
+                        index=SYNTHESIZER_OPTIONS.index(_cur_synth),
+                        key="synthesizer_type",
+                        disabled=not controls_active,
+                        help=(
+                            "Simple: lightweight additive synthesis, fully self-contained.\n"
+                            "GeneralUser GS: FluidSynth + General MIDI SoundFont. Requires fluidsynth "
+                            "and soundfonts/GeneralUser-GS.sf2."
+                        ),
+                    )
+            with sy_right:
+                with st.container(border=True):
+                    st.markdown(
+                        '<div class="param-group-label">Layer assignment</div>',
+                        unsafe_allow_html=True,
+                    )
+                    instrument_mode = st.radio(
+                        "Instrument layer selection",
+                        ["Automatic", "Manual"],
+                        index=0,
+                        horizontal=True,
+                        disabled=not controls_active,
+                        help=(
+                            "Automatic: each layer instrument is chosen by scoring GM programs against "
+                            "visual features (brightness, saturation, Fourier band energies, saliency).\n"
+                            "Manual: pick each layer individually in the Instruments tab."
+                        ),
+                    )
+
+        # ── Tab 4 · Instruments ──────────────────────────────────────────────
+        with tab_inst:
+            choices  = get_instrument_choices_with_none(synthesizer_type)
+            fallback = choices[1] if len(choices) > 1 else "None"
+            cache    = st.session_state.get("photo_analysis_cache")
+
+            if controls_active and isinstance(cache, dict):
+                _fdef: Dict[str, float] = cache["analysis"]["features"]  # type: ignore[assignment]
+                _ai = choose_instruments(_fdef, "Automatic", synthesizer_type)
+                defaults = [
+                    instrument_label(x) if x.startswith("gm_")
+                    else SIMPLE_INTERNAL_TO_DISPLAY.get(x, fallback)
+                    for x in _ai
+                ]
+            else:
+                defaults = (
+                    ["Acoustic Grand Piano", "Orchestral Harp", "Cello",
+                     "Pad 2 (warm)", "Acoustic Grand Piano", "Flute"]
+                    if synthesizer_type == SYNTH_GENERALUSER_GS
+                    else ["Soft piano", "Harp", "Cello-like bass", "Warm pad", "Soft piano", "None"]
+                )
             while len(defaults) < 6:
                 defaults.append("None")
             main_layer, texture_layer, bass_layer, pad_layer, chord_layer, solo_layer = defaults[:6]
-            main_gain_db, texture_gain_db, bass_gain_db, pad_gain_db, chord_gain_db, solo_gain_db = 0.0, -2.0, 0.0, -8.0, -3.0, -1.0
-            def idx(val: str) -> int:
+            main_gain_db    = 0.0
+            texture_gain_db = -2.0
+            bass_gain_db    = 0.0
+            pad_gain_db     = -8.0
+            chord_gain_db   = -3.0
+            solo_gain_db    = -1.0
+
+            def _idx(val: str) -> int:
                 return choices.index(val) if val in choices else choices.index(fallback)
-            if instrument_mode == "Manual":
-                c1, c2, c3 = st.columns(3, gap="medium")
-                with c1:
-                    main_layer = st.selectbox("Main layer", choices, index=idx(defaults[0]), disabled=not controls_active)
-                    main_gain_db = st.slider("Main gain (dB)", -24.0, 12.0, 0.0, 0.5, disabled=not controls_active)
-                with c2:
-                    texture_layer = st.selectbox("Texture layer", choices, index=idx(defaults[1]), disabled=not controls_active)
-                    texture_gain_db = st.slider("Texture gain (dB)", -24.0, 12.0, -2.0, 0.5, disabled=not controls_active)
-                with c3:
-                    bass_layer = st.selectbox("Bass layer", choices, index=idx(defaults[2]), disabled=not controls_active)
-                    bass_gain_db = st.slider("Bass gain (dB)", -24.0, 12.0, 0.0, 0.5, disabled=not controls_active)
-                c4, c5, c6 = st.columns(3, gap="medium")
-                with c4:
-                    pad_layer = st.selectbox("Pad layer", choices, index=idx(defaults[3]), disabled=not controls_active)
-                    pad_gain_db = st.slider("Pad gain (dB)", -24.0, 12.0, -8.0, 0.5, disabled=not controls_active)
-                with c5:
-                    chord_layer = st.selectbox("Chord layer", choices, index=idx(defaults[4]), disabled=not controls_active)
-                    chord_gain_db = st.slider("Chord gain (dB)", -24.0, 12.0, -3.0, 0.5, disabled=not controls_active)
-                if synthesizer_type == SYNTH_GENERALUSER_GS:
-                    with c6:
-                        solo_layer = st.selectbox("Solo layer", choices, index=idx(defaults[5]), disabled=not controls_active)
-                        solo_gain_db = st.slider("Solo gain (dB)", -24.0, 12.0, -1.0, 0.5, disabled=not controls_active)
-        run_clicked = st.button("Run", type="primary", width="stretch")
 
-    current_signature = make_signature(bars=number_of_bars, complexity=complexity, variation=variation_strength, random=random_factor, scale=requested_scale, synth=synthesizer_type, instrument_mode=instrument_mode, main=main_layer if instrument_mode == "Manual" else None, texture=texture_layer if instrument_mode == "Manual" else None, bass=bass_layer if instrument_mode == "Manual" else None, pad=pad_layer if instrument_mode == "Manual" else None, chord=chord_layer if instrument_mode == "Manual" else None, solo=solo_layer if instrument_mode == "Manual" and synthesizer_type == SYNTH_GENERALUSER_GS else None, mapping=mapping_style, bpm=manual_tempo_bpm if mapping_style == "Manual" else None, gains=[main_gain_db, texture_gain_db, bass_gain_db, pad_gain_db, chord_gain_db, solo_gain_db] if instrument_mode == "Manual" else None)
-    rerun_after = False
-    if run_clicked:
-        st.session_state["generation_message"] = None; st.session_state["generation_message_type"] = None
-        if uploaded_image is None or uploaded_bytes is None or uploaded_hash is None:
-            st.session_state["generation_result"] = None; st.session_state["generation_message"] = f"Could not generate the composition because the input image could not be loaded: {upload_error}" if upload_error else "Please choose an input photo before running the sonification."; st.session_state["generation_message_type"] = "error" if upload_error else "warning"
-        else:
-            try:
-                with st.spinner("Generating the composition from the photo..."):
-                    if not controls_active:
-                        rerun_after = True
-                        original_analysis = analyze_image(uploaded_image, 0.0, np.random.default_rng(0))
-                        st.session_state["photo_analysis_cache"] = {"image_id": uploaded_hash, "analysis": original_analysis}
-                        f0: Dict[str, float] = original_analysis["features"]  # type: ignore[assignment]
-                        mn, mx, df = compute_bar_settings(f0)
-                        st.session_state["parameter_defaults"] = {"image_id": uploaded_hash, "bar_min": mn, "bar_max": mx, "bar_default": df, "variation_default": f0.get("auto_variation_strength", clamp(0.25 + 0.60 * (1 - f0["symmetry_score"]), 0.25, 0.85)), "complexity_default": f0["auto_complexity"]}
-                        effective = dict(bars=df, variation=st.session_state["parameter_defaults"]["variation_default"], complexity=f0["auto_complexity"], random=0, scale="Automatic", synth=SYNTH_GENERALUSER_GS, instrument_mode="Automatic", main="Soft piano", texture="Harp", bass="Cello-like bass", pad="Warm pad", chord="Soft piano", solo="Flute", mapping="Scientific", bpm=None, gains=[0, 0, 0, 0, 0, 0])
-                        analysis = original_analysis
-                    else:
-                        cache = st.session_state.get("photo_analysis_cache")
-                        original_analysis = cache["analysis"] if isinstance(cache, dict) and cache.get("image_id") == uploaded_hash else analyze_image(uploaded_image, 0.0, np.random.default_rng(0))
-                        st.session_state["photo_analysis_cache"] = {"image_id": uploaded_hash, "analysis": original_analysis}
-                        seed = int(hashlib.sha256(f"{uploaded_hash}:{random_factor}".encode()).hexdigest()[:16], 16)
-                        analysis = analyze_image(uploaded_image, float(random_factor), np.random.default_rng(seed))
-                        effective = dict(bars=int(number_of_bars), variation=float(variation_strength), complexity=float(complexity), random=int(random_factor), scale=requested_scale, synth=synthesizer_type, instrument_mode=instrument_mode, main=main_layer, texture=texture_layer, bass=bass_layer, pad=pad_layer, chord=chord_layer, solo=solo_layer, mapping=mapping_style, bpm=manual_tempo_bpm, gains=[main_gain_db, texture_gain_db, bass_gain_db, pad_gain_db, chord_gain_db, solo_gain_db])
-                    events, info = generate_composition(analysis, effective["bars"], effective["complexity"], effective["variation"], effective["scale"], effective["synth"], effective["instrument_mode"], effective["main"], effective["texture"], effective["bass"], effective["pad"], effective["chord"], effective["solo"], effective["mapping"], effective["bpm"], *effective["gains"])
-                    audio, synth_message = render_backend(events, info, effective["synth"])
-                    audio = normalize_master_audio(audio)
-                    wav_bytes = audio_to_wav_bytes(audio, DEFAULT_SAMPLE_RATE)
-                    midi_bytes = midi_bytes_from_events(events, info.tempo)
-                    mp3_bytes, mp3_message = audio_to_mp3_bytes(audio, DEFAULT_SAMPLE_RATE)
-                    st.session_state["generation_result"] = {"image_id": uploaded_hash, "image_name": input_name, "image_is_default": input_is_default, "parameter_signature": make_signature(bars=effective["bars"], complexity=effective["complexity"], variation=effective["variation"], random=effective["random"], scale=effective["scale"], synth=effective["synth"], instrument_mode=effective["instrument_mode"], main=effective["main"] if effective["instrument_mode"] == "Manual" else None, texture=effective["texture"] if effective["instrument_mode"] == "Manual" else None, bass=effective["bass"] if effective["instrument_mode"] == "Manual" else None, pad=effective["pad"] if effective["instrument_mode"] == "Manual" else None, chord=effective["chord"] if effective["instrument_mode"] == "Manual" else None, solo=effective["solo"] if effective["instrument_mode"] == "Manual" and effective["synth"] == SYNTH_GENERALUSER_GS else None, mapping=effective["mapping"], bpm=effective["bpm"] if effective["mapping"] == "Manual" else None, gains=effective["gains"] if effective["instrument_mode"] == "Manual" else None), "analysis": analysis, "display_analysis": original_analysis, "features": analysis["features"], "maps": analysis["maps"], "display_features": original_analysis["features"], "display_maps": original_analysis["maps"], "events": events, "info": info, "audio": audio, "wav_bytes": wav_bytes, "mp3_bytes": mp3_bytes, "mp3_message": mp3_message, "synth_message": synth_message, "midi_bytes": midi_bytes, "sample_rate": DEFAULT_SAMPLE_RATE, "parameters": effective}
-                st.session_state["generation_message"] = "Composition generated."; st.session_state["generation_message_type"] = "success"
-            except Exception as exc:
-                st.session_state["generation_result"] = None; st.session_state["generation_message"] = f"Could not generate the composition: {exc}"; st.session_state["generation_message_type"] = "error"
-    if rerun_after and st.session_state.get("generation_message_type") == "success": st.rerun()
-    msg, typ = st.session_state.get("generation_message"), st.session_state.get("generation_message_type")
-    if msg:
-        getattr(st, typ if typ in {"success", "warning", "error", "info"} else "info")(msg)
-    result = st.session_state.get("generation_result")
-    if not (uploaded_hash is not None and isinstance(result, dict) and result.get("image_id") == uploaded_hash): result = None
-
-    with analysis_col:
-        with st.expander("Photo analysis", expanded=False):
-            if result is None:
-                st.info("Run the app once to display the photo-derived maps and analysis metrics.")
+            if instrument_mode != "Manual":
+                if controls_active and isinstance(cache, dict):
+                    st.markdown(
+                        '<div class="param-group-label">Auto-selected instruments</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _layer_names = ["Main", "Texture", "Bass", "Pad", "Chord", "Solo"]
+                    _auto_html = '<div class="result-meta">' + "".join(
+                        f'<div class="result-meta-item">{_layer_names[i]} <span>{defaults[i]}</span></div>'
+                        for i in range(6 if synthesizer_type == SYNTH_GENERALUSER_GS else 5)
+                    ) + "</div>"
+                    st.markdown(_auto_html, unsafe_allow_html=True)
+                    st.markdown("")
+                st.info(
+                    "Set **Instrument layer selection** to **Manual** in the Synthesizer tab "
+                    "to choose instruments and gain for each layer individually."
+                )
             else:
-                maps = result.get("display_maps", result["maps"]); feats = result.get("display_features", result["features"])
-                for key, title, cmap in [("luminance", "Luminance map", "gray"), ("edge_map", "Edge strength map", "gray"), ("fft_log_magnitude", "2D Fourier log-magnitude", "gray"), ("shadow_highlight_map", "Highlights in red, shadows in blue", None)]:
-                    st.image(plot_map(maps[key], title, cmap), width="stretch")
-                st.markdown("##### Photo analysis")
-                a1, a2, a3 = st.columns(3); a1.metric("Brightness", f"{feats['mean_brightness']:.3f}"); a2.metric("Contrast", f"{feats['contrast']:.3f}"); a3.metric("Saturation", f"{feats['mean_saturation']:.3f}")
-                b1, b2, b3 = st.columns(3); b1.metric("Shadows", format_percent(feats["shadow_proportion"])); b2.metric("Highlights", format_percent(feats["highlight_proportion"])); b3.metric("Edge density", format_percent(feats["edge_density"]))
-                c1, c2, c3 = st.columns(3); c1.metric("Texture entropy", f"{feats['texture_entropy']:.3f}"); c2.metric("Symmetry", f"{feats['symmetry_score']:.3f}"); c3.metric("Saliency peak", f"{feats['saliency_peak']:.3f}")
-                d1, d2, d3, d4 = st.columns(4); d1.metric("Fourier low", format_percent(feats["low_frequency_energy"])); d2.metric("Fourier mid", format_percent(feats["mid_frequency_energy"])); d3.metric("Fourier high", format_percent(feats["high_frequency_energy"])); d4.metric("Peak score", f"{feats['periodic_peak_score']:.3f}")
-    with output_col:
-        st.markdown("<div class='column-title'>Output audio</div>", unsafe_allow_html=True)
-        if result is None:
-            st.info("No generated audio yet."); st.download_button("Download MP3 file", data=b"", file_name="photo_sonification.mp3", mime="audio/mpeg", disabled=True, width="stretch"); st.download_button("Download MIDI file", data=b"", file_name="photo_sonification_score.mid", mime="audio/midi", disabled=True, width="stretch")
-            with st.expander("Audio analysis", expanded=False): st.info("Run the app once to display the audio plots.")
-        else:
-            info: CompositionInfo = result["info"]; st.audio(result["wav_bytes"], format="audio/wav")
-            o1, o2 = st.columns(2); o1.metric("Tempo", f"{info.tempo:.1f} BPM"); o2.metric("Bars / length", f"{info.bars} bars / {info.duration:.1f} s")
-            st.metric("Key / scale", f"{info.key_name} / {info.scale_name}")
-            summary = f"Mood: {info.mood} | Main: {instrument_label(info.main_instrument)} | Texture: {instrument_label(info.texture_instrument)} | Bass: {instrument_label(info.bass_instrument)} | Pad: {instrument_label(info.pad_instrument)} | Chord: {instrument_label(info.chord_instrument)}"
-            if info.solo_instrument != "none":
-                summary += f" | Solo: {instrument_label(info.solo_instrument)}"
-            st.write(summary)
-            st.caption(result.get("synth_message", ""))
-            if result.get("parameter_signature") != current_signature: st.warning("Some parameters changed after the last generation. Click Run to update the output.")
-            st.download_button("Download MP3 file", data=ensure_bytes(result["mp3_bytes"]), file_name="photo_sonification.mp3", mime="audio/mpeg", disabled=result["mp3_bytes"] is None, width="stretch")
-            st.download_button("Download MIDI file", data=ensure_bytes(result["midi_bytes"]), file_name="photo_sonification_score.mid", mime="audio/midi", width="stretch")
-            with st.expander("Audio analysis", expanded=False):
-                audio: np.ndarray = result["audio"]; events: List[NoteEvent] = result["events"]; sr = int(result["sample_rate"])
-                plots = [("Full Fourier magnitude", plot_frequency(audio, sr, "Full Fourier magnitude")), ("Waveform", plot_waveform(audio, sr, "Waveform"))]
-                layer_titles = [("main", "Main layer Fourier"), ("texture", "Texture layer Fourier"), ("bass", "Bass layer Fourier"), ("pad", "Pad layer Fourier"), ("chord", "Chord layer Fourier")]
-                if info.solo_instrument != "none":
-                    layer_titles.append(("solo", "Solo layer Fourier"))
-                for layer, title in layer_titles:
-                    plots.append((title, plot_frequency(render_events(events, info.duration, sr, layer=layer), sr, title)))
-                for _, img in plots: st.image(img, width="stretch")
-            if result["mp3_bytes"] is None: st.caption(result.get("mp3_message", "MP3 export is unavailable."))
+                i_col1, i_col2, i_col3 = st.columns(3, gap="medium")
+                with i_col1:
+                    with st.container(border=True):
+                        st.markdown('<div class="param-group-label">Main</div>', unsafe_allow_html=True)
+                        main_layer   = st.selectbox("Main layer",    choices, index=_idx(defaults[0]), disabled=not controls_active, label_visibility="collapsed")
+                        main_gain_db = st.slider("Main gain (dB)",   -24.0, 12.0,  0.0, 0.5, disabled=not controls_active)
+                with i_col2:
+                    with st.container(border=True):
+                        st.markdown('<div class="param-group-label">Texture</div>', unsafe_allow_html=True)
+                        texture_layer    = st.selectbox("Texture layer", choices, index=_idx(defaults[1]), disabled=not controls_active, label_visibility="collapsed")
+                        texture_gain_db  = st.slider("Texture gain (dB)", -24.0, 12.0, -2.0, 0.5, disabled=not controls_active)
+                with i_col3:
+                    with st.container(border=True):
+                        st.markdown('<div class="param-group-label">Bass</div>', unsafe_allow_html=True)
+                        bass_layer   = st.selectbox("Bass layer",    choices, index=_idx(defaults[2]), disabled=not controls_active, label_visibility="collapsed")
+                        bass_gain_db = st.slider("Bass gain (dB)",   -24.0, 12.0,  0.0, 0.5, disabled=not controls_active)
+                i_col4, i_col5, i_col6 = st.columns(3, gap="medium")
+                with i_col4:
+                    with st.container(border=True):
+                        st.markdown('<div class="param-group-label">Pad</div>', unsafe_allow_html=True)
+                        pad_layer    = st.selectbox("Pad layer",     choices, index=_idx(defaults[3]), disabled=not controls_active, label_visibility="collapsed")
+                        pad_gain_db  = st.slider("Pad gain (dB)",    -24.0, 12.0, -8.0, 0.5, disabled=not controls_active)
+                with i_col5:
+                    with st.container(border=True):
+                        st.markdown('<div class="param-group-label">Chord</div>', unsafe_allow_html=True)
+                        chord_layer    = st.selectbox("Chord layer",   choices, index=_idx(defaults[4]), disabled=not controls_active, label_visibility="collapsed")
+                        chord_gain_db  = st.slider("Chord gain (dB)",  -24.0, 12.0, -3.0, 0.5, disabled=not controls_active)
+                if synthesizer_type == SYNTH_GENERALUSER_GS:
+                    with i_col6:
+                        with st.container(border=True):
+                            st.markdown('<div class="param-group-label">Solo</div>', unsafe_allow_html=True)
+                            solo_layer   = st.selectbox("Solo layer",    choices, index=_idx(defaults[5]), disabled=not controls_active, label_visibility="collapsed")
+                            solo_gain_db = st.slider("Solo gain (dB)",   -24.0, 12.0, -1.0, 0.5, disabled=not controls_active)
 
-with doc_fr_tab:
-    render_doc("documentation_fr.md", "documentation_fr_section", "Le fichier `documentation_fr.md` est introuvable à côté de `app_sl.py`.")
-with doc_en_tab:
-    render_doc("documentation_en.md", "documentation_en_section", "The file `documentation_en.md` could not be found next to `app_sl.py`.")
+    # =========================================================================
+    # Row 3:  Photo analysis  (full width, collapsed by default)
+    # =========================================================================
+    with st.expander("Photo analysis", expanded=False):
+        if result is None:
+            st.info("Run the app once to display the photo-derived maps and analysis metrics.")
+        else:
+            _maps  = result.get("display_maps",    result["maps"])
+            _feats = result.get("display_features", result["features"])
+            pa_col1, pa_col2 = st.columns([2, 1], gap="large")
+            with pa_col1:
+                for _key, _title, _cmap in [
+                    ("luminance",            "Luminance map",             "gray"),
+                    ("edge_map",             "Edge strength map",         "gray"),
+                    ("fft_log_magnitude",    "2D Fourier log-magnitude",  "gray"),
+                    ("shadow_highlight_map", "Highlights (red) · shadows (blue)", None),
+                ]:
+                    st.markdown(f'<div class="section-pill">{_title}</div>', unsafe_allow_html=True)
+                    st.image(plot_map(_maps[_key], _title, _cmap), width="stretch")
+            with pa_col2:
+                st.markdown('<div class="param-group-label">Metrics</div>', unsafe_allow_html=True)
+                _m = _feats
+                st.markdown(
+                    '<div class="result-meta">'
+                    f'<div class="result-meta-item">Brightness <span>{_m["mean_brightness"]:.3f}</span></div>'
+                    f'<div class="result-meta-item">Contrast <span>{_m["contrast"]:.3f}</span></div>'
+                    f'<div class="result-meta-item">Saturation <span>{_m["mean_saturation"]:.3f}</span></div>'
+                    f'<div class="result-meta-item">Shadows <span>{format_percent(_m["shadow_proportion"])}</span></div>'
+                    f'<div class="result-meta-item">Highlights <span>{format_percent(_m["highlight_proportion"])}</span></div>'
+                    f'<div class="result-meta-item">Edge density <span>{format_percent(_m["edge_density"])}</span></div>'
+                    f'<div class="result-meta-item">Texture entropy <span>{_m["texture_entropy"]:.3f}</span></div>'
+                    f'<div class="result-meta-item">Symmetry <span>{_m["symmetry_score"]:.3f}</span></div>'
+                    f'<div class="result-meta-item">Saliency peak <span>{_m["saliency_peak"]:.3f}</span></div>'
+                    f'<div class="result-meta-item">Fourier low <span>{format_percent(_m["low_frequency_energy"])}</span></div>'
+                    f'<div class="result-meta-item">Fourier mid <span>{format_percent(_m["mid_frequency_energy"])}</span></div>'
+                    f'<div class="result-meta-item">Fourier high <span>{format_percent(_m["high_frequency_energy"])}</span></div>'
+                    f'<div class="result-meta-item">Peak score <span>{_m["periodic_peak_score"]:.3f}</span></div>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # =========================================================================
+    # Row 4:  Audio analysis  (full width, collapsed by default)
+    # =========================================================================
+    with st.expander("Audio analysis", expanded=False):
+        if result is None:
+            st.info("Run the app once to display the audio frequency plots.")
+        else:
+            _audio_arr = result["audio"]
+            _evts      = result["events"]
+            _sr        = int(result["sample_rate"])
+            _dur       = result["info"].duration
+            _plots = [
+                ("Full Fourier magnitude", plot_frequency(_audio_arr, _sr, "Full Fourier magnitude")),
+                ("Waveform",               plot_waveform(_audio_arr,  _sr, "Waveform")),
+            ]
+            for _lk, _lt in [("main","Main"), ("texture","Texture"), ("bass","Bass"),
+                              ("pad","Pad"), ("chord","Chord")]:
+                _plots.append((_lt, plot_frequency(render_events(_evts, _dur, _sr, layer=_lk), _sr, _lt)))
+            if result["info"].solo_instrument != "none":
+                _plots.append(("Solo", plot_frequency(render_events(_evts, _dur, _sr, layer="solo"), _sr, "Solo")))
+            _aa_cols = st.columns(3, gap="medium")
+            for _pi, (_pt, _pimg) in enumerate(_plots):
+                with _aa_cols[_pi % 3]:
+                    st.markdown(f'<div class="section-pill">{_pt}</div>', unsafe_allow_html=True)
+                    st.image(_pimg, width="stretch")
+
+    # =========================================================================
+    # Computation block  —  runs only when run_requested is True
+    # Mirrors audio_visualization: progress placeholders filled live,
+    # then st.rerun() re-activates the button and shows the result.
+    # =========================================================================
+    if st.session_state.run_requested and uploaded_image is not None:
+        progress_bar = progress_bar_placeholder.progress(0)
+        try:
+            rerun_after = False
+
+            # ── Phase 1: first run on this image → use auto parameters ────────
+            if not controls_active:
+                rerun_after = True
+                progress_status_placeholder.info("Analysing photo — 10%")
+                progress_bar.progress(10)
+                original_analysis = analyze_image(uploaded_image, 0.0, np.random.default_rng(0))
+                st.session_state["photo_analysis_cache"] = {
+                    "image_id": uploaded_hash, "analysis": original_analysis,
+                }
+                f0: Dict[str, float] = original_analysis["features"]  # type: ignore[assignment]
+                mn, mx, df = compute_bar_settings(f0)
+                st.session_state["parameter_defaults"] = {
+                    "image_id": uploaded_hash, "bar_min": mn, "bar_max": mx, "bar_default": df,
+                    "variation_default": f0.get(
+                        "auto_variation_strength",
+                        clamp(0.25 + 0.60 * (1.0 - f0["symmetry_score"]), 0.25, 0.85),
+                    ),
+                    "complexity_default": f0["auto_complexity"],
+                }
+                effective = dict(
+                    bars=df,
+                    variation=st.session_state["parameter_defaults"]["variation_default"],
+                    complexity=f0["auto_complexity"],
+                    random=0,
+                    scale="Automatic",
+                    synth=SYNTH_GENERALUSER_GS,
+                    instrument_mode="Automatic",
+                    main="Soft piano", texture="Harp", bass="Cello-like bass",
+                    pad="Warm pad", chord="Soft piano", solo="Flute",
+                    mapping="Scientific", bpm=None,
+                    gains=[0.0, -2.0, 0.0, -8.0, -3.0, -1.0],
+                )
+                analysis = original_analysis
+
+            # ── Phase 2: subsequent runs → use current slider values ──────────
+            else:
+                progress_status_placeholder.info("Analysing photo — 10%")
+                progress_bar.progress(10)
+                _cache = st.session_state.get("photo_analysis_cache")
+                original_analysis = (
+                    _cache["analysis"]
+                    if isinstance(_cache, dict) and _cache.get("image_id") == uploaded_hash
+                    else analyze_image(uploaded_image, 0.0, np.random.default_rng(0))
+                )
+                st.session_state["photo_analysis_cache"] = {
+                    "image_id": uploaded_hash, "analysis": original_analysis,
+                }
+                _seed = int(
+                    hashlib.sha256(f"{uploaded_hash}:{random_factor}".encode()).hexdigest()[:16], 16
+                )
+                analysis = analyze_image(
+                    uploaded_image, float(random_factor), np.random.default_rng(_seed)
+                )
+                effective = dict(
+                    bars=int(number_of_bars),
+                    variation=float(variation_strength),
+                    complexity=float(complexity),
+                    random=int(random_factor),
+                    scale=requested_scale,
+                    synth=synthesizer_type,
+                    instrument_mode=instrument_mode,
+                    main=main_layer, texture=texture_layer,
+                    bass=bass_layer, pad=pad_layer,
+                    chord=chord_layer, solo=solo_layer,
+                    mapping=mapping_style, bpm=manual_tempo_bpm,
+                    gains=[
+                        main_gain_db, texture_gain_db, bass_gain_db,
+                        pad_gain_db, chord_gain_db, solo_gain_db,
+                    ],
+                )
+
+            # ── Generate composition ──────────────────────────────────────────
+            progress_status_placeholder.info("Generating composition — 35%")
+            progress_bar.progress(35)
+            events, info = generate_composition(
+                analysis,
+                effective["bars"],  effective["complexity"], effective["variation"],
+                effective["scale"], effective["synth"],       effective["instrument_mode"],
+                effective["main"],  effective["texture"],     effective["bass"],
+                effective["pad"],   effective["chord"],       effective["solo"],
+                effective["mapping"], effective["bpm"],
+                *effective["gains"],
+            )
+
+            # ── Render audio ──────────────────────────────────────────────────
+            progress_status_placeholder.info("Rendering audio — 65%")
+            progress_bar.progress(65)
+            audio_arr, synth_message = render_backend(events, info, effective["synth"])
+            audio_arr = normalize_master_audio(audio_arr)
+
+            # ── Encode output files ───────────────────────────────────────────
+            progress_status_placeholder.info("Encoding output files — 88%")
+            progress_bar.progress(88)
+            wav_bytes_out  = audio_to_wav_bytes(audio_arr, DEFAULT_SAMPLE_RATE)
+            midi_bytes_out = midi_bytes_from_events(events, info.tempo)
+            mp3_bytes_out, mp3_message = audio_to_mp3_bytes(audio_arr, DEFAULT_SAMPLE_RATE)
+
+            # ── Store result ──────────────────────────────────────────────────
+            st.session_state["generation_result"] = {
+                "image_id":         uploaded_hash,
+                "image_name":       input_name,
+                "image_is_default": input_is_default,
+                "analysis":         analysis,
+                "display_analysis": original_analysis,
+                "features":         analysis["features"],
+                "maps":             analysis["maps"],
+                "display_features": original_analysis["features"],
+                "display_maps":     original_analysis["maps"],
+                "events":           events,
+                "info":             info,
+                "audio":            audio_arr,
+                "wav_bytes":        wav_bytes_out,
+                "mp3_bytes":        mp3_bytes_out,
+                "mp3_message":      mp3_message,
+                "synth_message":    synth_message,
+                "midi_bytes":       midi_bytes_out,
+                "sample_rate":      DEFAULT_SAMPLE_RATE,
+                "parameters":       effective,
+            }
+
+            progress_bar.progress(100)
+            progress_status_placeholder.success("Done — 100%")
+
+            st.session_state.run_in_progress = False
+            st.session_state.run_requested   = False
+            st.session_state.last_run_status = "Done"
+
+            # Force a rerun so the button re-activates and the result appears.
+            # (The button was rendered earlier in this pass while run_in_progress
+            # was still True; rerun makes it interactive again immediately.)
+            st.rerun()
+
+        except Exception as _exc:
+            progress_bar_placeholder.empty()
+            progress_status_placeholder.error(f"Could not generate the composition: {_exc}")
+            st.session_state.run_in_progress = False
+            st.session_state.run_requested   = False
+            st.session_state.last_run_status = None
+
+    elif st.session_state.run_requested and uploaded_image is None:
+        # Edge case: button clicked but image not yet available
+        progress_status_placeholder.warning(
+            "Please upload or wait for the default photo to load before generating."
+        )
+        st.session_state.run_in_progress = False
+        st.session_state.run_requested   = False
+
+
+# ============================================================
+# Entry point
+# ============================================================
+
+def main() -> None:
+    configure_page()
+    init_session_state()
+    render_portfolio_links()
+
+    app_tab, doc_fr_tab, doc_en_tab = st.tabs([
+        "App",
+        "Documentation FR",
+        "Documentation EN",
+    ])
+
+    with app_tab:
+        render_app_tab()
+
+    with doc_fr_tab:
+        render_documentation_tab(DOC_FR_TITLES, DOC_FR_SECTIONS, "doc_fr_title")
+
+    with doc_en_tab:
+        render_documentation_tab(DOC_EN_TITLES, DOC_EN_SECTIONS, "doc_en_title")
+
+
+if __name__ == "__main__":
+    main()
