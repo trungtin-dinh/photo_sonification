@@ -273,6 +273,79 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return float(max(lo, min(hi, x)))
 
 
+def get_param(params: Optional[Dict[str, object]], key: str, default: object) -> object:
+    """Read one optional user parameter with a safe fallback."""
+    if not isinstance(params, dict):
+        return default
+    return params.get(key, default)
+
+
+def get_float_param(params: Optional[Dict[str, object]], key: str, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float(get_param(params, key, default))
+    except Exception:
+        value = default
+    return clamp(value, lo, hi)
+
+
+def get_int_param(params: Optional[Dict[str, object]], key: str, default: int, lo: int, hi: int) -> int:
+    try:
+        value = int(round(float(get_param(params, key, default))))
+    except Exception:
+        value = default
+    return int(clamp(value, lo, hi))
+
+
+def arrange_pair(a: float, b: float, lo: float, hi: float, min_gap: float = 0.0) -> Tuple[float, float]:
+    """Sort and clamp a min/max pair, preserving a minimum gap when possible."""
+    x, y = sorted([float(a), float(b)])
+    x = clamp(x, lo, hi)
+    y = clamp(y, lo, hi)
+    min_gap = max(0.0, float(min_gap))
+    if y < x + min_gap:
+        mid = clamp(0.5 * (x + y), lo, hi)
+        x = clamp(mid - 0.5 * min_gap, lo, hi)
+        y = clamp(mid + 0.5 * min_gap, lo, hi)
+        if y < x + min_gap:
+            x = max(lo, y - min_gap)
+            y = min(hi, x + min_gap)
+    return float(x), float(y)
+
+
+def get_range_param(
+    params: Optional[Dict[str, object]],
+    key: str,
+    default: Tuple[float, float],
+    lo: float,
+    hi: float,
+    min_gap: float = 0.0,
+) -> Tuple[float, float]:
+    raw = get_param(params, key, default)
+    try:
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            return arrange_pair(float(raw[0]), float(raw[1]), lo, hi, min_gap)
+    except Exception:
+        pass
+    return arrange_pair(float(default[0]), float(default[1]), lo, hi, min_gap)
+
+
+def normalize_positive_weights(values: Dict[str, float], fallback: Dict[str, float]) -> Dict[str, float]:
+    cleaned = {k: max(0.0, float(v)) for k, v in values.items()}
+    total = float(sum(cleaned.values()))
+    if total <= 1e-12:
+        cleaned = {k: max(0.0, float(v)) for k, v in fallback.items()}
+        total = float(sum(cleaned.values()))
+    if total <= 1e-12:
+        n = max(1, len(cleaned))
+        return {k: 1.0 / n for k in cleaned}
+    return {k: v / total for k, v in cleaned.items()}
+
+
+def emit_step(step_callback, label: str) -> None:
+    if step_callback is not None:
+        step_callback(label)
+
+
 def normalize01(x: np.ndarray) -> np.ndarray:
     x = np.asarray(x, dtype=np.float64)
     lo = float(np.min(x)) if x.size else 0.0
@@ -351,15 +424,18 @@ def rgb_to_hsv_features(rgb: np.ndarray, luminance: np.ndarray) -> Dict[str, flo
     return {"mean_saturation": float(np.mean(sat)), "dominant_hue": float(hue_mean), "warmth": float(np.mean(rgb[..., 0]) - np.mean(rgb[..., 2]))}
 
 
-def compute_edge_map(luminance: np.ndarray) -> Tuple[np.ndarray, float]:
+def compute_edge_map(luminance: np.ndarray, params: Optional[Dict[str, object]] = None) -> Tuple[np.ndarray, float]:
     gy, gx = np.gradient(luminance)
     mag = np.sqrt(gx * gx + gy * gy)
     norm = normalize01(mag)
-    threshold = np.percentile(norm, 75.0)
-    return norm, float(np.mean(norm > max(0.08, threshold)))
+    percentile = get_float_param(params, "edge_threshold_percentile", 75.0, 0.0, 100.0)
+    minimum = get_float_param(params, "edge_threshold_minimum", 0.08, 0.0, 1.0)
+    threshold = np.percentile(norm, percentile)
+    return norm, float(np.mean(norm > max(minimum, threshold)))
 
 
 def normalized_histogram_entropy(values: np.ndarray, bins: int = 64) -> float:
+    bins = max(4, int(bins))
     hist, _ = np.histogram(np.asarray(values).ravel(), bins=bins, range=(0.0, 1.0))
     total = float(np.sum(hist))
     if total <= 1e-12:
@@ -387,20 +463,44 @@ def compute_symmetry(luminance: np.ndarray) -> float:
     return clamp(0.70 * lr + 0.30 * tb, 0.0, 1.0)
 
 
-def compute_saliency_map(rgb: np.ndarray, luminance: np.ndarray, edge_map: np.ndarray) -> Tuple[np.ndarray, Dict[str, float]]:
+def compute_saliency_map(
+    rgb: np.ndarray,
+    luminance: np.ndarray,
+    edge_map: np.ndarray,
+    params: Optional[Dict[str, object]] = None,
+) -> Tuple[np.ndarray, Dict[str, float]]:
     rgb_mean = np.mean(rgb.reshape(-1, 3), axis=0)
     color_rarity = normalize01(np.sqrt(np.sum((rgb - rgb_mean) ** 2, axis=2)))
     luminance_rarity = normalize01(np.abs(luminance - float(np.mean(luminance))))
     hue_sat = rgb_to_hsv_features(rgb, luminance)["mean_saturation"]
-    base = 0.42 * normalize01(edge_map) + 0.34 * color_rarity + 0.24 * luminance_rarity
+
+    feature_defaults = {"edge": 0.42, "color": 0.34, "luminance": 0.24}
+    feature_weights = normalize_positive_weights(
+        {
+            "edge": get_float_param(params, "saliency_edge_weight", 0.42, 0.0, 5.0),
+            "color": get_float_param(params, "saliency_color_weight", 0.34, 0.0, 5.0),
+            "luminance": get_float_param(params, "saliency_luminance_weight", 0.24, 0.0, 5.0),
+        },
+        feature_defaults,
+    )
+    base = (
+        feature_weights["edge"] * normalize01(edge_map)
+        + feature_weights["color"] * color_rarity
+        + feature_weights["luminance"] * luminance_rarity
+    )
+
     h, w = luminance.shape
     yy, xx = np.indices((h, w))
     xn = xx / max(1, w - 1)
     yn = yy / max(1, h - 1)
     center_bias = 1.0 - normalize01(np.sqrt((xn - 0.5) ** 2 + (yn - 0.5) ** 2))
-    saliency = normalize01(0.88 * base + 0.12 * center_bias)
-    thresh = np.percentile(saliency, 96.0)
-    mask = saliency >= max(0.20, thresh)
+
+    center_weight = get_float_param(params, "saliency_center_bias_weight", 0.12, 0.0, 1.0)
+    saliency = normalize01((1.0 - center_weight) * base + center_weight * center_bias)
+    percentile = get_float_param(params, "saliency_threshold_percentile", 96.0, 0.0, 100.0)
+    minimum = get_float_param(params, "saliency_threshold_minimum", 0.20, 0.0, 1.0)
+    thresh = np.percentile(saliency, percentile)
+    mask = saliency >= max(minimum, thresh)
     weight = np.where(mask, saliency, 0.0)
     cx, cy = center_of_mass(weight)
     if float(np.sum(weight)) <= 1e-12:
@@ -419,14 +519,20 @@ def compute_saliency_map(rgb: np.ndarray, luminance: np.ndarray, edge_map: np.nd
     return saliency, features
 
 
-def analyze_fourier(luminance: np.ndarray, random_factor: float = 0.0, rng: Optional[np.random.Generator] = None) -> Dict[str, object]:
+def analyze_fourier(
+    luminance: np.ndarray,
+    random_factor: float = 0.0,
+    rng: Optional[np.random.Generator] = None,
+    params: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
     h, w = luminance.shape
     rng = np.random.default_rng() if rng is None else rng
     window = np.outer(np.hanning(h) if h > 1 else np.ones(h), np.hanning(w) if w > 1 else np.ones(w))
     centered = luminance - float(np.mean(luminance))
     spectrum = np.fft.fftshift(np.fft.fft2(centered * window))
     magnitude = np.abs(spectrum)
-    sigma = 0.18 * (clamp(float(random_factor) / 100.0, 0.0, 1.0) ** 2)
+    sigma_coeff = get_float_param(params, "fourier_noise_sigma_coeff", 0.18, 0.0, 1.0)
+    sigma = sigma_coeff * (clamp(float(random_factor) / 100.0, 0.0, 1.0) ** 2)
     if sigma > 0:
         magnitude *= np.exp(rng.normal(0.0, sigma, size=magnitude.shape))
     power = magnitude ** 2
@@ -435,20 +541,31 @@ def analyze_fourier(luminance: np.ndarray, random_factor: float = 0.0, rng: Opti
     uu, vv = np.meshgrid(fx, fy)
     radius = np.sqrt(uu * uu + vv * vv)
     r = radius / max(float(np.max(radius)), 1e-12)
+
+    dc_radius = get_float_param(params, "fourier_dc_radius", 0.025, 0.0, 0.20)
+    low_cut, high_cut = get_range_param(params, "fourier_band_limits", (0.14, 0.34), 0.03, 0.95, 0.02)
+
     power_no_dc = power.copy()
-    power_no_dc[r < 0.025] = 0.0
+    power_no_dc[r < dc_radius] = 0.0
     total = max(float(np.sum(power_no_dc)), 1e-12)
-    low = float(np.sum(power_no_dc[(r >= 0.025) & (r < 0.14)]) / total)
-    mid = float(np.sum(power_no_dc[(r >= 0.14) & (r < 0.34)]) / total)
-    high = float(np.sum(power_no_dc[r >= 0.34]) / total)
+    low = float(np.sum(power_no_dc[(r >= dc_radius) & (r < low_cut)]) / total)
+    mid = float(np.sum(power_no_dc[(r >= low_cut) & (r < high_cut)]) / total)
+    high = float(np.sum(power_no_dc[r >= high_cut]) / total)
     centroid = float(np.sum(r * power_no_dc) / total)
     bandwidth = float(np.sqrt(np.sum(((r - centroid) ** 2) * power_no_dc) / total))
     theta = np.arctan2(vv, uu)
-    horizontal_frequency_energy = float(np.sum(power_no_dc[np.abs(np.sin(theta)) < 0.38]) / total)
-    vertical_frequency_energy = float(np.sum(power_no_dc[np.abs(np.cos(theta)) < 0.38]) / total)
+    orientation_width = get_float_param(params, "fourier_orientation_width", 0.38, 0.05, 0.95)
+    horizontal_frequency_energy = float(np.sum(power_no_dc[np.abs(np.sin(theta)) < orientation_width]) / total)
+    vertical_frequency_energy = float(np.sum(power_no_dc[np.abs(np.cos(theta)) < orientation_width]) / total)
     diagonal_frequency_energy = clamp(1.0 - horizontal_frequency_energy - vertical_frequency_energy, 0.0, 1.0)
     valid = power_no_dc[power_no_dc > 0]
-    peak_score = 0.0 if valid.size == 0 else clamp(math.log1p(float(np.percentile(valid, 99.7)) / (float(np.percentile(valid, 90.0)) + 1e-12)) / 5.0, 0.0, 1.0)
+    peak_lo, peak_hi = get_range_param(params, "fourier_peak_percentiles", (90.0, 99.7), 0.0, 100.0, 0.1)
+    peak_divisor = get_float_param(params, "fourier_peak_log_divisor", 5.0, 0.5, 20.0)
+    peak_score = 0.0 if valid.size == 0 else clamp(
+        math.log1p(float(np.percentile(valid, peak_hi)) / (float(np.percentile(valid, peak_lo)) + 1e-12)) / peak_divisor,
+        0.0,
+        1.0,
+    )
     return {
         "fft_log_magnitude": normalize01(np.log1p(magnitude)),
         "low_frequency_energy": low,
@@ -464,38 +581,73 @@ def analyze_fourier(luminance: np.ndarray, random_factor: float = 0.0, rng: Opti
     }
 
 
-def analyze_image(image: Image.Image, random_factor: float = 0.0, rng: Optional[np.random.Generator] = None) -> Dict[str, object]:
+def analyze_image(
+    image: Image.Image,
+    random_factor: float = 0.0,
+    rng: Optional[np.random.Generator] = None,
+    params: Optional[Dict[str, object]] = None,
+    step_callback=None,
+) -> Dict[str, object]:
     rng = np.random.default_rng() if rng is None else rng
-    rgb = image_to_rgb_array(image)
-    sigma = 0.045 * (clamp(float(random_factor) / 100.0, 0.0, 1.0) ** 2)
+
+    emit_step(step_callback, "Image resize and RGB normalization")
+    max_side = get_int_param(params, "analysis_max_side", MAX_ANALYSIS_SIDE, 128, 2048)
+    rgb = image_to_rgb_array(image, max_side=max_side)
+
+    sigma_coeff = get_float_param(params, "image_noise_sigma_coeff", 0.045, 0.0, 0.25)
+    sigma = sigma_coeff * (clamp(float(random_factor) / 100.0, 0.0, 1.0) ** 2)
     if sigma > 0:
+        emit_step(step_callback, "Spatial noise perturbation")
         rgb = np.clip(rgb + rng.normal(0.0, sigma, size=rgb.shape), 0.0, 1.0)
+
+    emit_step(step_callback, "Luminance and shadow/highlight thresholds")
     lum = rgb_to_luminance(rgb)
-    p05, p95 = float(np.percentile(lum, 5)), float(np.percentile(lum, 95))
-    shadow = lum < max(0.18, p05 + 0.03)
-    highlight = lum > min(0.82, p95 - 0.03)
-    edge, edge_density = compute_edge_map(lum)
-    texture_entropy = normalized_histogram_entropy(edge)
-    fourier = analyze_fourier(lum, random_factor=random_factor, rng=rng)
+    lum_p_low, lum_p_high = get_range_param(params, "luminance_percentile_range", (5.0, 95.0), 0.0, 100.0, 0.1)
+    p_low, p_high = float(np.percentile(lum, lum_p_low)), float(np.percentile(lum, lum_p_high))
+    shadow_floor = get_float_param(params, "shadow_dark_floor", 0.18, 0.0, 1.0)
+    highlight_floor = get_float_param(params, "highlight_bright_floor", 0.82, 0.0, 1.0)
+    shadow_offset = get_float_param(params, "shadow_offset", 0.03, 0.0, 0.50)
+    highlight_offset = get_float_param(params, "highlight_offset", 0.03, 0.0, 0.50)
+    shadow = lum < max(shadow_floor, p_low + shadow_offset)
+    highlight = lum > min(highlight_floor, p_high - highlight_offset)
+
+    emit_step(step_callback, "Gradient edge map and entropy")
+    edge, edge_density = compute_edge_map(lum, params=params)
+    entropy_bins = get_int_param(params, "entropy_histogram_bins", 64, 8, 256)
+    texture_entropy = normalized_histogram_entropy(edge, bins=entropy_bins)
+
+    emit_step(step_callback, "2D FFT and Fourier band energies")
+    fourier = analyze_fourier(lum, random_factor=random_factor, rng=rng, params=params)
+
+    emit_step(step_callback, "HSV color statistics")
     hsv = rgb_to_hsv_features(rgb, lum)
-    saliency, saliency_features = compute_saliency_map(rgb, lum, edge)
+
+    emit_step(step_callback, "Saliency map and centroid extraction")
+    saliency, saliency_features = compute_saliency_map(rgb, lum, edge, params=params)
+
+    emit_step(step_callback, "Symmetry and automatic music defaults")
     bright_weight = np.maximum(lum - np.mean(lum), 0.0)
     shadow_weight = np.where(shadow, 1.0 - lum, 0.0)
     high_weight = np.where(highlight, lum, 0.0)
     sym = compute_symmetry(lum)
+    auto_complexity_lo, auto_complexity_hi = get_range_param(params, "auto_complexity_range", (0.25, 0.90), 0.05, 1.0, 0.01)
+    auto_variation_lo, auto_variation_hi = get_range_param(params, "auto_variation_range", (0.25, 0.85), 0.0, 1.0, 0.01)
+    auto_complexity = clamp(auto_complexity_lo + (auto_complexity_hi - auto_complexity_lo) * texture_entropy, auto_complexity_lo, auto_complexity_hi)
+    auto_variation = clamp(auto_variation_lo + (auto_variation_hi - auto_variation_lo) * (1.0 - sym), auto_variation_lo, auto_variation_hi)
+
     features: Dict[str, float] = {
         "analysis_width": int(lum.shape[1]),
         "analysis_height": int(lum.shape[0]),
         "mean_brightness": float(np.mean(lum)),
         "contrast": float(np.std(lum)),
-        "dynamic_range": float(p95 - p05),
+        "dynamic_range": float(p_high - p_low),
         "shadow_proportion": float(np.mean(shadow)),
         "highlight_proportion": float(np.mean(highlight)),
         "edge_density": float(edge_density),
         "texture_entropy": float(texture_entropy),
         "symmetry_score": float(sym),
-        "auto_complexity": clamp(0.25 + 0.65 * texture_entropy, 0.25, 0.90),
-        "auto_variation_strength": clamp(0.25 + 0.60 * (1.0 - sym), 0.25, 0.85),
+        "auto_complexity": auto_complexity,
+        "auto_variation_strength": auto_variation,
         "bright_centroid_x": center_of_mass(bright_weight)[0],
         "shadow_centroid_x": center_of_mass(shadow_weight)[0],
         "highlight_centroid_x": center_of_mass(high_weight)[0],
@@ -517,12 +669,34 @@ def analyze_image(image: Image.Image, random_factor: float = 0.0, rng: Optional[
     return {"features": features, "maps": maps}
 
 
-def compute_bar_settings(features: Dict[str, float]) -> Tuple[int, int, int]:
-    score = clamp(0.40 * features.get("texture_entropy", 0.0) + 0.25 * features.get("edge_density", 0.0) + 0.20 * features.get("high_frequency_energy", 0.0) + 0.15 * features.get("periodic_peak_score", 0.0), 0.0, 1.0)
-    mn = int(round(np.interp(score, [0, 1], [4, 8])))
-    mx = int(round(np.interp(score, [0, 1], [12, 24])))
-    df = int(round(np.interp(score, [0, 1], [6, 16])))
-    return int(clamp(mn, 4, 8)), max(mx, mn + 1), int(clamp(df, mn, mx))
+def compute_bar_settings(features: Dict[str, float], params: Optional[Dict[str, object]] = None) -> Tuple[int, int, int]:
+    defaults = {"texture": 0.40, "edge": 0.25, "high": 0.20, "peak": 0.15}
+    weights = normalize_positive_weights(
+        {
+            "texture": get_float_param(params, "bar_weight_texture", 0.40, 0.0, 5.0),
+            "edge": get_float_param(params, "bar_weight_edge", 0.25, 0.0, 5.0),
+            "high": get_float_param(params, "bar_weight_high_frequency", 0.20, 0.0, 5.0),
+            "peak": get_float_param(params, "bar_weight_periodicity", 0.15, 0.0, 5.0),
+        },
+        defaults,
+    )
+    score = clamp(
+        weights["texture"] * features.get("texture_entropy", 0.0)
+        + weights["edge"] * features.get("edge_density", 0.0)
+        + weights["high"] * features.get("high_frequency_energy", 0.0)
+        + weights["peak"] * features.get("periodic_peak_score", 0.0),
+        0.0,
+        1.0,
+    )
+    min_lo, min_hi = get_range_param(params, "auto_bar_min_range", (4.0, 8.0), 1.0, 32.0, 1.0)
+    max_lo, max_hi = get_range_param(params, "auto_bar_max_range", (12.0, 24.0), 2.0, 64.0, 1.0)
+    def_lo, def_hi = get_range_param(params, "auto_bar_default_range", (6.0, 16.0), 1.0, 64.0, 1.0)
+    mn = int(round(np.interp(score, [0, 1], [min_lo, min_hi])))
+    mx = int(round(np.interp(score, [0, 1], [max_lo, max_hi])))
+    if mx <= mn:
+        mx = mn + 1
+    df = int(round(np.interp(score, [0, 1], [def_lo, def_hi])))
+    return int(clamp(mn, 1, 64)), int(clamp(mx, mn + 1, 64)), int(clamp(df, mn, mx))
 
 
 def get_instrument_choices(synthesizer_type: str) -> List[str]:
@@ -756,22 +930,50 @@ def time_slice_statistics(luminance: np.ndarray, n_slices: int) -> List[Dict[str
     return stats
 
 
-def add_saliency_solo_events(events: List[NoteEvent], maps: Dict[str, np.ndarray], features: Dict[str, float], melody_notes: List[int], duration: float, beat: float, solo_inst: str, solo_gain_db: float) -> None:
+def add_saliency_solo_events(
+    events: List[NoteEvent],
+    maps: Dict[str, np.ndarray],
+    features: Dict[str, float],
+    melody_notes: List[int],
+    duration: float,
+    beat: float,
+    solo_inst: str,
+    solo_gain_db: float,
+    params: Optional[Dict[str, object]] = None,
+) -> None:
     if solo_inst == "none" or not melody_notes:
         return
     sal = np.asarray(maps.get("saliency_map"), dtype=np.float64)
     if sal.size == 0 or float(np.max(sal)) <= 1e-12:
         return
     h, w = sal.shape
-    sal_strength = clamp(0.55 * features.get("saliency_peak", 0.0) + 0.25 * features.get("saliency_mean", 0.0) + 0.20 * (1.0 - features.get("saliency_area", 0.0)), 0.0, 1.0)
-    n_notes = int(round(np.interp(sal_strength, [0.0, 1.0], [3, 18])))
-    n_notes = int(clamp(n_notes, 2, 22))
-    candidate_count = min(sal.size, max(64, n_notes * 18))
+    strength_defaults = {"peak": 0.55, "mean": 0.25, "area_inverse": 0.20}
+    strength_weights = normalize_positive_weights(
+        {
+            "peak": get_float_param(params, "solo_saliency_peak_weight", 0.55, 0.0, 5.0),
+            "mean": get_float_param(params, "solo_saliency_mean_weight", 0.25, 0.0, 5.0),
+            "area_inverse": get_float_param(params, "solo_saliency_area_inverse_weight", 0.20, 0.0, 5.0),
+        },
+        strength_defaults,
+    )
+    sal_strength = clamp(
+        strength_weights["peak"] * features.get("saliency_peak", 0.0)
+        + strength_weights["mean"] * features.get("saliency_mean", 0.0)
+        + strength_weights["area_inverse"] * (1.0 - features.get("saliency_area", 0.0)),
+        0.0,
+        1.0,
+    )
+    note_lo, note_hi = get_range_param(params, "solo_note_count_range", (3.0, 18.0), 1.0, 48.0, 1.0)
+    note_cap = get_int_param(params, "solo_note_cap", 22, 1, 64)
+    n_notes = int(round(np.interp(sal_strength, [0.0, 1.0], [note_lo, note_hi])))
+    n_notes = int(clamp(n_notes, 1, note_cap))
+    candidate_multiplier = get_int_param(params, "solo_candidate_multiplier", 18, 4, 64)
+    candidate_count = min(sal.size, max(64, n_notes * candidate_multiplier))
     flat = np.argpartition(sal.ravel(), -candidate_count)[-candidate_count:]
     coords = [np.unravel_index(int(k), sal.shape) for k in flat]
     coords = sorted(coords, key=lambda rc: float(sal[rc[0], rc[1]]), reverse=True)
     picked: List[Tuple[int, int]] = []
-    min_dist = 0.055
+    min_dist = get_float_param(params, "solo_min_distance", 0.055, 0.0, 0.50)
     for yy, xx in coords:
         xn = xx / max(1, w - 1)
         yn = yy / max(1, h - 1)
@@ -781,6 +983,7 @@ def add_saliency_solo_events(events: List[NoteEvent], maps: Dict[str, np.ndarray
             break
     picked = sorted(picked, key=lambda rc: rc[1])
     gain = 10.0 ** (float(solo_gain_db) / 20.0)
+    dur_min, dur_max = get_range_param(params, "solo_duration_beats_range", (0.18, 1.25), 0.05, 4.0, 0.05)
     for k, (yy, xx) in enumerate(picked):
         x_norm = xx / max(1, w - 1)
         y_norm = yy / max(1, h - 1)
@@ -789,38 +992,74 @@ def add_saliency_solo_events(events: List[NoteEvent], maps: Dict[str, np.ndarray
         note = melody_notes[int(round(clamp(1.0 - y_norm, 0.0, 1.0) * (len(melody_notes) - 1)))] + 12
         if k % 5 == 3:
             note += 7
-        dur = clamp((0.32 + 0.70 * strength + 0.20 * features.get("saliency_spread", 0.0)) * beat, 0.18 * beat, 1.25 * beat)
+        dur = clamp((0.32 + 0.70 * strength + 0.20 * features.get("saliency_spread", 0.0)) * beat, dur_min * beat, dur_max * beat)
         vel = clamp((0.18 + 0.56 * strength) * gain, 0.05, 0.92)
         pan = clamp(-0.82 + 1.64 * x_norm, -0.9, 0.9)
         events.append(NoteEvent(t, dur, int(clamp(note, 48, 112)), vel, solo_inst, pan, "solo"))
 
 
-def generate_composition(analysis: Dict[str, object], bars: int, complexity: float, variation: float, requested_scale: str, synthesizer_type: str, instrument_mode: str, main_layer: str, texture_layer: str, bass_layer: str, pad_layer: str, chord_layer: str, solo_layer: str, mapping_style: str, manual_bpm: Optional[float], main_gain_db: float, texture_gain_db: float, bass_gain_db: float, pad_gain_db: float, chord_gain_db: float, solo_gain_db: float) -> Tuple[List[NoteEvent], CompositionInfo]:
+def generate_composition(
+    analysis: Dict[str, object],
+    bars: int,
+    complexity: float,
+    variation: float,
+    requested_scale: str,
+    synthesizer_type: str,
+    instrument_mode: str,
+    main_layer: str,
+    texture_layer: str,
+    bass_layer: str,
+    pad_layer: str,
+    chord_layer: str,
+    solo_layer: str,
+    mapping_style: str,
+    manual_bpm: Optional[float],
+    main_gain_db: float,
+    texture_gain_db: float,
+    bass_gain_db: float,
+    pad_gain_db: float,
+    chord_gain_db: float,
+    solo_gain_db: float,
+    params: Optional[Dict[str, object]] = None,
+    step_callback=None,
+) -> Tuple[List[NoteEvent], CompositionInfo]:
     features: Dict[str, float] = analysis["features"]  # type: ignore[assignment]
     maps: Dict[str, np.ndarray] = analysis["maps"]  # type: ignore[assignment]
     lum = maps["luminance"]
     b, c, sh = features["mean_brightness"], features["contrast"], features["shadow_proportion"]
     edge, sat, warm = features["edge_density"], features["mean_saturation"], features["warmth"]
     lo, hi, centroid, bw, peak = features["low_frequency_energy"], features["high_frequency_energy"], features["fourier_centroid"], features["fourier_bandwidth"], features["periodic_peak_score"]
+
+    emit_step(step_callback, "Tonal mapping: key, scale and tempo")
     key_index = int(round(features["dominant_hue"] * 12.0)) % 12
     key_name = KEY_NAMES[key_index]
     scale_name = choose_scale(features, requested_scale)
     intervals = SCALES[scale_name]
     root = int(clamp(48 + key_index + round(np.interp(b, [0, 1], [-5, 7])), 38, 58))
+
+    sci_lo, sci_hi = get_range_param(params, "tempo_scientific_range", (48.0, 152.0), 1.0, 240.0, 1.0)
+    bal_lo, bal_hi = get_range_param(params, "tempo_balanced_range", (56.0, 132.0), 1.0, 240.0, 1.0)
+    mus_lo, mus_hi = get_range_param(params, "tempo_musical_range", (72.0, 108.0), 1.0, 240.0, 1.0)
+    manual_min = get_float_param(params, "manual_bpm_min", 1.0, 1.0, 240.0)
     if mapping_style == "Manual" and manual_bpm is not None:
-        tempo = max(1.0, float(manual_bpm))
+        tempo = max(manual_min, float(manual_bpm))
     elif mapping_style == "Scientific":
-        tempo = clamp(50 + 70 * edge + 58 * c + 42 * peak + 34 * hi + 22 * centroid - 20 * sh, 48, 152)
+        tempo = clamp(50 + 70 * edge + 58 * c + 42 * peak + 34 * hi + 22 * centroid - 20 * sh, sci_lo, sci_hi)
     elif mapping_style == "Musical":
-        tempo = clamp(82 + 10 * sat + 8 * b - 6 * sh + 4 * warm, 72, 108)
+        tempo = clamp(82 + 10 * sat + 8 * b - 6 * sh + 4 * warm, mus_lo, mus_hi)
     else:
-        tempo = clamp(62 + 38 * edge + 28 * c + 20 * peak + 10 * hi - 8 * sh, 56, 132)
+        tempo = clamp(62 + 38 * edge + 28 * c + 20 * peak + 10 * hi - 8 * sh, bal_lo, bal_hi)
     beat = 60.0 / tempo
     bars = int(clamp(int(bars), 1, 64))
-    duration = min(MAX_RENDER_SECONDS, bars * 4 * beat)
+    max_render_seconds = get_float_param(params, "max_render_seconds", MAX_RENDER_SECONDS, 8.0, 240.0)
+    duration = min(max_render_seconds, bars * 4 * beat)
+
+    emit_step(step_callback, "Instrument scoring and layer assignment")
     main_i, tex_i, bass_i, pad_i, chord_i, solo_i = choose_instruments(features, instrument_mode, synthesizer_type, main_layer, texture_layer, bass_layer, pad_layer, chord_layer, solo_layer)
     if synthesizer_type != SYNTH_GENERALUSER_GS:
         solo_i = "none"
+
+    emit_step(step_callback, "Chord progression and scale-note lattice")
     progression = choose_progression(scale_name, features)
     melody_notes = build_scale_notes(root, intervals, root + 10, root + 31)
     bass_notes = build_scale_notes(root, intervals, root - 18, root + 7)
@@ -832,6 +1071,9 @@ def generate_composition(analysis: Dict[str, object], bars: int, complexity: flo
     bass_velocity = clamp(0.30 + 0.55 * sh + 0.25 * lo, 0.22, 0.86)
     melody_velocity = clamp(0.30 + 0.30 * features["dynamic_range"] + 0.20 * c + 0.15 * sat, 0.28, 0.90)
     gains = {"main": 10 ** (main_gain_db / 20), "texture": 10 ** (texture_gain_db / 20), "bass": 10 ** (bass_gain_db / 20), "pad": 10 ** (pad_gain_db / 20), "chord": 10 ** (chord_gain_db / 20)}
+    double_hit_threshold = get_float_param(params, "chord_double_hit_high_freq_threshold", 0.22, 0.0, 1.0)
+
+    emit_step(step_callback, "Pad, chord and bass event generation")
     for bar in range(bars):
         start = bar * 4 * beat
         chord = progression[(bar + (1 if variation > 0.45 and bar >= bars // 2 else 0)) % len(progression)]
@@ -840,18 +1082,22 @@ def generate_composition(analysis: Dict[str, object], bars: int, complexity: flo
             for n in chord_notes:
                 events.append(NoteEvent(start, 4.05 * beat, int(clamp(n + 12, 36, 88)), clamp(pad_velocity * gains["pad"], 0, 1), pad_i, 0.15 * math.sin(bar * 0.7), "pad"))
         if chord_i != "none":
-            for hit in range(2 if hi > 0.22 else 1):
+            for hit in range(2 if hi > double_hit_threshold else 1):
                 for n in chord_notes:
                     events.append(NoteEvent(start + hit * 2 * beat, 1.75 * beat, int(clamp(n + 12, 38, 92)), clamp(chord_velocity * (0.92 if hit else 1.0) * gains["chord"], 0, 1), chord_i, pan_bias * 0.45, "chord"))
         if bass_i != "none":
             rb = min(bass_notes, key=lambda x: abs(x - (root - 12))) if bass_notes else root - 12
             events.append(NoteEvent(start, 1.55 * beat, rb, clamp(bass_velocity * gains["bass"], 0, 1), bass_i, shadow_pan, "bass"))
             events.append(NoteEvent(start + 2 * beat, 1.35 * beat, rb + 7, clamp(bass_velocity * 0.82 * gains["bass"], 0, 1), bass_i, shadow_pan * 0.7, "bass"))
+
+    emit_step(step_callback, "Time-slice melody extraction")
     slices = time_slice_statistics(lum, bars * 8)
-    step = 1 if complexity > 0.52 else 2
+    complexity_step_threshold = get_float_param(params, "complexity_step_threshold", 0.52, 0.0, 1.0)
+    melody_energy_gate = get_float_param(params, "melody_energy_gate", 0.10, 0.0, 1.0)
+    step = 1 if complexity > complexity_step_threshold else 2
     for i in range(0, len(slices), step):
         sl = slices[i]
-        if sl["energy"] < 0.10 and i % 4 != 0:
+        if sl["energy"] < melody_energy_gate and i % 4 != 0:
             continue
         pos = clamp(1 - sl["y_centroid"] + 0.18 * (sl["energy"] - b), 0, 1)
         note = melody_notes[int(round(pos * (len(melody_notes) - 1)))]
@@ -860,22 +1106,32 @@ def generate_composition(analysis: Dict[str, object], bars: int, complexity: flo
         dur = (0.42 + 0.52 * (1 - hi) + 0.25 * sl["energy"]) * beat
         vel = clamp((melody_velocity + 0.25 * sl["contrast"]) * gains["main"], 0, 1)
         events.append(NoteEvent(i * 0.5 * beat, dur, int(clamp(note, 36, 100)), vel, main_i, clamp(pan_bias + 0.20 * math.sin(i * 0.37), -0.75, 0.75), "main"))
+
+    emit_step(step_callback, "Texture arpeggios and percussion ticks")
     density = clamp(0.20 + 0.80 * complexity + 0.75 * hi + 0.45 * bw, 0, 1)
-    if density > 0.28 and tex_i != "none":
-        interval = 0.5 * beat if density > 0.55 else beat
+    texture_density_threshold = get_float_param(params, "texture_density_threshold", 0.28, 0.0, 1.0)
+    texture_fast_threshold = get_float_param(params, "texture_fast_threshold", 0.55, 0.0, 1.0)
+    percussion_density_threshold = get_float_param(params, "percussion_density_threshold", 0.18, 0.0, 1.0)
+    percussion_fast_threshold = get_float_param(params, "percussion_fast_threshold", 0.55, 0.0, 1.0)
+    percussion_skip_threshold = get_float_param(params, "percussion_skip_threshold", 0.62, 0.0, 1.0)
+    if density > texture_density_threshold and tex_i != "none":
+        interval = 0.5 * beat if density > texture_fast_threshold else beat
         for j in range(int(duration / interval)):
             t = j * interval
             chord = progression[int(t // (4 * beat)) % len(progression)]
             pat = chord + [chord[1] + 12, chord[2] + 12]
             events.append(NoteEvent(t, 0.34 * beat, int(clamp(root + pat[j % len(pat)] + 12, 45, 96)), clamp((0.16 + 0.40 * hi + 0.22 * edge) * gains["texture"], 0, 1), tex_i, clamp(-0.45 + 0.90 * ((j % 8) / 7), -0.65, 0.65), "texture"))
-    if density > 0.18:
-        sub = 0.5 * beat if density < 0.55 else 0.25 * beat
+    if density > percussion_density_threshold:
+        sub = 0.5 * beat if density < percussion_fast_threshold else 0.25 * beat
         for j in range(int(duration / sub)):
-            if j % 2 == 1 and density < 0.62:
+            if j % 2 == 1 and density < percussion_skip_threshold:
                 continue
             events.append(NoteEvent(j * sub, 0.08 * beat, 76 if j % 4 in [0, 3] else 72, clamp((0.10 + 0.42 * density) * (1.0 if j % 8 == 0 else 0.62), 0.05, 0.55), "texture_tick", 0.55 * math.sin(j * 0.91), "texture"))
+
     if synthesizer_type == SYNTH_GENERALUSER_GS:
-        add_saliency_solo_events(events, maps, features, melody_notes, duration, beat, solo_i, solo_gain_db)
+        emit_step(step_callback, "Saliency-driven solo/accent events")
+        add_saliency_solo_events(events, maps, features, melody_notes, duration, beat, solo_i, solo_gain_db, params=params)
+
     events = [ev for ev in events if ev.start < duration]
     events.sort(key=lambda ev: (ev.start, ev.layer, ev.midi))
     info = CompositionInfo(tempo, bars, duration, key_name, scale_name, main_i, tex_i, bass_i, pad_i, chord_i, solo_i, describe_mood(features), {"Saliency": "drives the GeneralUser GS solo/accent layer"})
@@ -1083,7 +1339,13 @@ def midi_bytes_from_events(events: List[NoteEvent], tempo: float) -> bytes:
     return b"MThd" + struct.pack(">IHHH", 6, 0, 1, ppq) + b"MTrk" + struct.pack(">I", len(track)) + bytes(track)
 
 
-def render_with_fluidsynth(events: List[NoteEvent], duration: float, tempo: float, sr: int) -> Tuple[Optional[np.ndarray], str]:
+def render_with_fluidsynth(
+    events: List[NoteEvent],
+    duration: float,
+    tempo: float,
+    sr: int,
+    params: Optional[Dict[str, object]] = None,
+) -> Tuple[Optional[np.ndarray], str]:
     sf2 = find_generaluser_soundfont()
     if sf2 is None:
         return None, "GeneralUser GS selected, but no SoundFont was found. Put GeneralUser-GS.sf2 in ./soundfonts/. Falling back to Simple synthesis."
@@ -1095,7 +1357,8 @@ def render_with_fluidsynth(events: List[NoteEvent], duration: float, tempo: floa
         wav = os.path.join(tmp, "render.wav")
         with open(mid, "wb") as f:
             f.write(midi_bytes_from_events(events, tempo))
-        cmd = [exe, "-ni", "-g", f"{FLUIDSYNTH_MASTER_GAIN:.3f}", "-F", wav, "-r", str(sr), sf2, mid]
+        fluid_gain = get_float_param(params, "fluidsynth_master_gain", FLUIDSYNTH_MASTER_GAIN, 0.05, 2.0)
+        cmd = [exe, "-ni", "-g", f"{fluid_gain:.3f}", "-F", wav, "-r", str(sr), sf2, mid]
         try:
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=90)
             audio, rendered_sr = wav_file_to_audio(wav)
@@ -1105,16 +1368,25 @@ def render_with_fluidsynth(events: List[NoteEvent], duration: float, tempo: floa
         return None, f"GeneralUser GS rendered at {rendered_sr} Hz instead of {sr} Hz. Falling back to Simple synthesis."
     target = int(round((duration + .8) * sr))
     audio = audio[:target] if audio.shape[0] >= target else np.vstack([audio, np.zeros((target - audio.shape[0], 2))])
-    return normalize_master_audio(audio), f"Audio rendered with GeneralUser GS through FluidSynth (master gain {FLUIDSYNTH_MASTER_GAIN:.2f})."
+    target_peak = get_float_param(params, "master_target_peak", MASTER_TARGET_PEAK, 0.10, 0.98)
+    target_rms = get_float_param(params, "master_target_rms", MASTER_TARGET_RMS, 0.01, 0.50)
+    return normalize_master_audio(audio, target_peak=target_peak, target_rms=target_rms), f"Audio rendered with GeneralUser GS through FluidSynth (master gain {fluid_gain:.2f})."
 
 
-def render_backend(events: List[NoteEvent], info: CompositionInfo, synthesizer_type: str) -> Tuple[np.ndarray, str]:
+def render_backend(
+    events: List[NoteEvent],
+    info: CompositionInfo,
+    synthesizer_type: str,
+    params: Optional[Dict[str, object]] = None,
+) -> Tuple[np.ndarray, str]:
+    target_peak = get_float_param(params, "master_target_peak", MASTER_TARGET_PEAK, 0.10, 0.98)
+    target_rms = get_float_param(params, "master_target_rms", MASTER_TARGET_RMS, 0.01, 0.50)
     if synthesizer_type == SYNTH_GENERALUSER_GS:
-        audio, msg = render_with_fluidsynth(events, info.duration, info.tempo, DEFAULT_SAMPLE_RATE)
+        audio, msg = render_with_fluidsynth(events, info.duration, info.tempo, DEFAULT_SAMPLE_RATE, params=params)
         if audio is not None:
             return audio, msg
-        return normalize_master_audio(render_events(events, info.duration, DEFAULT_SAMPLE_RATE, normalize=False)), msg
-    return normalize_master_audio(render_events(events, info.duration, DEFAULT_SAMPLE_RATE, normalize=False)), "Audio rendered with the Simple procedural synthesizer."
+        return normalize_master_audio(render_events(events, info.duration, DEFAULT_SAMPLE_RATE, normalize=False), target_peak=target_peak, target_rms=target_rms), msg
+    return normalize_master_audio(render_events(events, info.duration, DEFAULT_SAMPLE_RATE, normalize=False), target_peak=target_peak, target_rms=target_rms), "Audio rendered with the Simple procedural synthesizer."
 
 
 def audio_to_mp3_bytes(audio: np.ndarray, sr: int) -> Tuple[Optional[bytes], str]:
@@ -1738,20 +2010,33 @@ def render_app_tab() -> None:
                     )
 
     # =========================================================================
-    # Row 2:  ⚙  Parameters  (tabs, full width, same structure as audio_visualization)
+    # Row 2:  Parameters  (tabbed mini-pages, matching audio_visualization)
     # =========================================================================
     with st.expander("⚙  Parameters", expanded=False):
         if not controls_active:
             st.info(
-                "Click **▶ Generate Audio** to analyse the photo and unlock the parameters."
+                "Click **▶ Generate Audio** once to analyse the photo and unlock photo-adaptive musical defaults. "
+                "The analysis, Fourier and saliency thresholds below already use safe default values."
                 if uploaded_image is not None
                 else "Upload a photo first, then click **▶ Generate Audio** to unlock the parameters."
             )
 
-        tab_struct, tab_tonal, tab_synth, tab_inst = st.tabs([
+        advanced_params: Dict[str, object] = {}
+        threshold_controls_enabled = uploaded_image is not None
+
+        (
+            tab_struct,
+            tab_analysis,
+            tab_fourier,
+            tab_tonal,
+            tab_synth,
+            tab_inst,
+        ) = st.tabs([
             "Structure",
+            "Image analysis",
+            "Fourier & saliency",
             "Tonality & Tempo",
-            "Synthesizer",
+            "Synth & Mix",
             "Instruments",
         ])
 
@@ -1760,27 +2045,18 @@ def render_app_tab() -> None:
             s_left, s_right = st.columns(2, gap="large")
             with s_left:
                 with st.container(border=True):
-                    st.markdown(
-                        '<div class="param-group-label">Musical shape</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown('<div class="param-group-label">Musical shape</div>', unsafe_allow_html=True)
                     number_of_bars = st.slider(
                         "Number of bars",
                         bar_min, bar_max, bar_default, 1,
                         disabled=not controls_active,
-                        help="Total length of the composition in 4/4 bars.",
+                        help="Total length of the composition in 4/4 bars. The min/max/default values are photo-adaptive after the first run.",
                     )
                     variation_strength = st.slider(
                         "Variation strength",
                         0.0, 1.0, variation_default, 0.01,
                         disabled=not controls_active,
                         help="Default derived from image symmetry. Controls how much the second half diverges from the first.",
-                    )
-            with s_right:
-                with st.container(border=True):
-                    st.markdown(
-                        '<div class="param-group-label">Density & randomness</div>',
-                        unsafe_allow_html=True,
                     )
                     complexity = st.slider(
                         "Composition complexity",
@@ -1794,16 +2070,225 @@ def render_app_tab() -> None:
                         disabled=not controls_active,
                         help="Adds controlled perturbation to the image and Fourier-domain analysis before composition.",
                     )
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Automatic range mapping</div>', unsafe_allow_html=True)
+                    auto_complexity_range = st.slider(
+                        "Auto complexity range",
+                        0.05, 1.00, (0.25, 0.90), 0.01,
+                        disabled=not threshold_controls_enabled,
+                        help="Texture entropy is mapped into this range. Streamlit keeps the low/high limits ordered.",
+                    )
+                    auto_variation_range = st.slider(
+                        "Auto variation range",
+                        0.00, 1.00, (0.25, 0.85), 0.01,
+                        disabled=not threshold_controls_enabled,
+                        help="1 - symmetry is mapped into this range. Streamlit keeps the low/high limits ordered.",
+                    )
+                    advanced_params["auto_complexity_range"] = auto_complexity_range
+                    advanced_params["auto_variation_range"] = auto_variation_range
 
-        # ── Tab 2 · Tonality & Tempo ─────────────────────────────────────────
+            with s_right:
+                
+
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Auto bar estimator</div>', unsafe_allow_html=True)
+                    auto_bar_min_range = st.slider(
+                        "Auto min-bars range",
+                        1, 32, (4, 8), 1,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    auto_bar_max_range = st.slider(
+                        "Auto max-bars range",
+                        2, 64, (12, 24), 1,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    auto_bar_default_range = st.slider(
+                        "Auto default-bars range",
+                        1, 64, (6, 16), 1,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    bar_weight_texture = st.slider("Weight · texture", 0.0, 2.0, 0.40, 0.01, disabled=not threshold_controls_enabled)
+                    bar_weight_edge = st.slider("Weight · edges", 0.0, 2.0, 0.25, 0.01, disabled=not threshold_controls_enabled)
+                    bar_weight_high_frequency = st.slider("Weight · high frequencies", 0.0, 2.0, 0.20, 0.01, disabled=not threshold_controls_enabled)
+                    bar_weight_periodicity = st.slider("Weight · periodicity", 0.0, 2.0, 0.15, 0.01, disabled=not threshold_controls_enabled)
+                    advanced_params.update({
+                        "auto_bar_min_range": auto_bar_min_range,
+                        "auto_bar_max_range": auto_bar_max_range,
+                        "auto_bar_default_range": auto_bar_default_range,
+                        "bar_weight_texture": bar_weight_texture,
+                        "bar_weight_edge": bar_weight_edge,
+                        "bar_weight_high_frequency": bar_weight_high_frequency,
+                        "bar_weight_periodicity": bar_weight_periodicity,
+                    })
+
+        # ── Tab 2 · Image analysis ───────────────────────────────────────────
+        with tab_analysis:
+            a_left, a_right = st.columns(2, gap="large")
+            with a_left:
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Pre-processing</div>', unsafe_allow_html=True)
+                    analysis_max_side = st.slider(
+                        "Analysis max side (px)",
+                        128, 2048, int(MAX_ANALYSIS_SIDE), 64,
+                        disabled=not threshold_controls_enabled,
+                        help="The photo is resized only for analysis. Larger values preserve detail but cost more CPU time.",
+                    )
+                    image_noise_sigma_coeff = st.slider(
+                        "Spatial noise coefficient",
+                        0.000, 0.250, 0.045, 0.005,
+                        disabled=not threshold_controls_enabled,
+                        help="Maximum coefficient used by Random factor for spatial perturbation.",
+                    )
+                    entropy_histogram_bins = st.slider(
+                        "Entropy histogram bins",
+                        8, 256, 64, 8,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    advanced_params.update({
+                        "analysis_max_side": analysis_max_side,
+                        "image_noise_sigma_coeff": image_noise_sigma_coeff,
+                        "entropy_histogram_bins": entropy_histogram_bins,
+                    })
+
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Edge detection</div>', unsafe_allow_html=True)
+                    edge_threshold_percentile = st.slider(
+                        "Edge threshold percentile",
+                        0.0, 100.0, 75.0, 0.5,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    edge_threshold_minimum = st.slider(
+                        "Minimum edge threshold",
+                        0.00, 1.00, 0.08, 0.01,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    advanced_params.update({
+                        "edge_threshold_percentile": edge_threshold_percentile,
+                        "edge_threshold_minimum": edge_threshold_minimum,
+                    })
+
+            with a_right:
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Luminance thresholds</div>', unsafe_allow_html=True)
+                    luminance_percentile_range = st.slider(
+                        "Luminance percentile range",
+                        0.0, 100.0, (5.0, 95.0), 0.5,
+                        disabled=not threshold_controls_enabled,
+                        help="Used for dynamic range, shadow threshold and highlight threshold. The range cannot be inverted.",
+                    )
+                    shadow_dark_floor = st.slider(
+                        "Shadow floor",
+                        0.00, 1.00, 0.18, 0.01,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    shadow_offset = st.slider(
+                        "Shadow percentile offset",
+                        0.00, 0.50, 0.03, 0.01,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    highlight_bright_floor = st.slider(
+                        "Highlight floor",
+                        0.00, 1.00, 0.82, 0.01,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    highlight_offset = st.slider(
+                        "Highlight percentile offset",
+                        0.00, 0.50, 0.03, 0.01,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    advanced_params.update({
+                        "luminance_percentile_range": luminance_percentile_range,
+                        "shadow_dark_floor": shadow_dark_floor,
+                        "shadow_offset": shadow_offset,
+                        "highlight_bright_floor": highlight_bright_floor,
+                        "highlight_offset": highlight_offset,
+                    })
+
+        # ── Tab 3 · Fourier & saliency ───────────────────────────────────────
+        with tab_fourier:
+            f_left, f_mid, f_right = st.columns(3, gap="large")
+            with f_left:
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Fourier analysis</div>', unsafe_allow_html=True)
+                    fourier_dc_radius = st.slider(
+                        "DC exclusion radius",
+                        0.000, 0.200, 0.025, 0.005,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    fourier_band_limits = st.slider(
+                        "Low/mid/high radial limits",
+                        0.03, 0.95, (0.14, 0.34), 0.01,
+                        disabled=not threshold_controls_enabled,
+                        help="Two ordered limits define low, mid and high Fourier energy bands.",
+                    )
+                    fourier_orientation_width = st.slider(
+                        "Orientation bandwidth",
+                        0.05, 0.95, 0.38, 0.01,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    fourier_peak_percentiles = st.slider(
+                        "Peak-score percentile range",
+                        0.0, 100.0, (90.0, 99.7), 0.1,
+                        disabled=not threshold_controls_enabled,
+                        help="Used to compare strong periodic peaks to the background. The range cannot be inverted.",
+                    )
+                    fourier_peak_log_divisor = st.slider(
+                        "Peak-score log divisor",
+                        0.5, 20.0, 5.0, 0.1,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    fourier_noise_sigma_coeff = st.slider(
+                        "Fourier noise coefficient",
+                        0.000, 1.000, 0.180, 0.005,
+                        disabled=not threshold_controls_enabled,
+                    )
+                    advanced_params.update({
+                        "fourier_dc_radius": fourier_dc_radius,
+                        "fourier_band_limits": fourier_band_limits,
+                        "fourier_orientation_width": fourier_orientation_width,
+                        "fourier_peak_percentiles": fourier_peak_percentiles,
+                        "fourier_peak_log_divisor": fourier_peak_log_divisor,
+                        "fourier_noise_sigma_coeff": fourier_noise_sigma_coeff,
+                    })
+
+            with f_mid:
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Saliency map</div>', unsafe_allow_html=True)
+                    saliency_edge_weight = st.slider("Weight · edge", 0.0, 2.0, 0.42, 0.01, disabled=not threshold_controls_enabled)
+                    saliency_color_weight = st.slider("Weight · color rarity", 0.0, 2.0, 0.34, 0.01, disabled=not threshold_controls_enabled)
+                    saliency_luminance_weight = st.slider("Weight · luminance rarity", 0.0, 2.0, 0.24, 0.01, disabled=not threshold_controls_enabled)
+                    saliency_center_bias_weight = st.slider("Center-bias weight", 0.00, 1.00, 0.12, 0.01, disabled=not threshold_controls_enabled)
+                    saliency_threshold_percentile = st.slider("Saliency threshold percentile", 0.0, 100.0, 96.0, 0.5, disabled=not threshold_controls_enabled)
+                    saliency_threshold_minimum = st.slider("Minimum saliency threshold", 0.00, 1.00, 0.20, 0.01, disabled=not threshold_controls_enabled)
+                    advanced_params.update({
+                        "saliency_edge_weight": saliency_edge_weight,
+                        "saliency_color_weight": saliency_color_weight,
+                        "saliency_luminance_weight": saliency_luminance_weight,
+                        "saliency_center_bias_weight": saliency_center_bias_weight,
+                        "saliency_threshold_percentile": saliency_threshold_percentile,
+                        "saliency_threshold_minimum": saliency_threshold_minimum,
+                    })
+
+            with f_right:
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Saliency solo layer</div>', unsafe_allow_html=True)
+                    solo_note_count_range = st.slider("Solo note-count range", 1, 48, (3, 18), 1, disabled=not threshold_controls_enabled)
+                    solo_note_cap = st.slider("Solo note cap", 1, 64, 22, 1, disabled=not threshold_controls_enabled)
+                    solo_min_distance = st.slider("Minimum saliency-point distance", 0.000, 0.500, 0.055, 0.005, disabled=not threshold_controls_enabled)
+                    solo_duration_beats_range = st.slider("Solo duration range (beats)", 0.05, 4.00, (0.18, 1.25), 0.05, disabled=not threshold_controls_enabled)
+                    advanced_params.update({
+                        "solo_note_count_range": solo_note_count_range,
+                        "solo_note_cap": solo_note_cap,
+                        "solo_min_distance": solo_min_distance,
+                        "solo_duration_beats_range": solo_duration_beats_range,
+                    })
+
+        # ── Tab 4 · Tonality & Tempo ─────────────────────────────────────────
         with tab_tonal:
             t_left, t_right = st.columns(2, gap="large")
             with t_left:
                 with st.container(border=True):
-                    st.markdown(
-                        '<div class="param-group-label">Tonal center</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown('<div class="param-group-label">Tonal center</div>', unsafe_allow_html=True)
                     _cur_scale = st.session_state.get("scale_selection", "Automatic")
                     if _cur_scale not in SCALE_OPTIONS:
                         _cur_scale = "Automatic"
@@ -1815,12 +2300,9 @@ def render_app_tab() -> None:
                         disabled=not controls_active,
                         help="Automatic lets the image brightness, warmth and saturation choose the mode.",
                     )
-            with t_right:
+                
                 with st.container(border=True):
-                    st.markdown(
-                        '<div class="param-group-label">Tempo mapping</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown('<div class="param-group-label">Tempo mapping</div>', unsafe_allow_html=True)
                     _mapping_opts = ["Scientific", "Balanced", "Musical", "Manual"]
                     _cur_map = st.session_state.get("mapping_style", "Scientific")
                     if _cur_map not in _mapping_opts:
@@ -1849,15 +2331,24 @@ def render_app_tab() -> None:
                             disabled=not controls_active,
                         )
 
-        # ── Tab 3 · Synthesizer ──────────────────────────────────────────────
+            with t_right:                
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Tempo clamp ranges</div>', unsafe_allow_html=True)
+                    tempo_scientific_range = st.slider("Scientific BPM range", 1.0, 240.0, (48.0, 152.0), 1.0, disabled=not threshold_controls_enabled)
+                    tempo_balanced_range = st.slider("Balanced BPM range", 1.0, 240.0, (56.0, 132.0), 1.0, disabled=not threshold_controls_enabled)
+                    tempo_musical_range = st.slider("Musical BPM range", 1.0, 240.0, (72.0, 108.0), 1.0, disabled=not threshold_controls_enabled)
+                    advanced_params.update({
+                        "tempo_scientific_range": tempo_scientific_range,
+                        "tempo_balanced_range": tempo_balanced_range,
+                        "tempo_musical_range": tempo_musical_range,
+                    })
+
+        # ── Tab 5 · Synth & Mix ──────────────────────────────────────────────
         with tab_synth:
-            sy_left, sy_right = st.columns(2, gap="large")
+            sy_left, sy_mid, sy_right = st.columns(3, gap="large")
             with sy_left:
                 with st.container(border=True):
-                    st.markdown(
-                        '<div class="param-group-label">Engine</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown('<div class="param-group-label">Engine</div>', unsafe_allow_html=True)
                     _cur_synth = st.session_state.get("synthesizer_type", SYNTH_GENERALUSER_GS)
                     if _cur_synth not in SYNTHESIZER_OPTIONS:
                         _cur_synth = SYNTH_GENERALUSER_GS
@@ -1873,12 +2364,6 @@ def render_app_tab() -> None:
                             "and soundfonts/GeneralUser-GS.sf2."
                         ),
                     )
-            with sy_right:
-                with st.container(border=True):
-                    st.markdown(
-                        '<div class="param-group-label">Layer assignment</div>',
-                        unsafe_allow_html=True,
-                    )
                     instrument_mode = st.radio(
                         "Instrument layer selection",
                         ["Automatic", "Manual"],
@@ -1891,8 +2376,38 @@ def render_app_tab() -> None:
                             "Manual: pick each layer individually in the Instruments tab."
                         ),
                     )
+                    
+            with sy_mid:
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Master bus</div>', unsafe_allow_html=True)
+                    master_target_peak = st.slider("Target peak", 0.10, 0.98, float(MASTER_TARGET_PEAK), 0.01, disabled=not threshold_controls_enabled)
+                    master_target_rms = st.slider("Target RMS", 0.01, 0.50, float(MASTER_TARGET_RMS), 0.01, disabled=not threshold_controls_enabled)
+                    max_render_seconds = st.slider("Maximum render duration (s)", 8.0, 240.0, float(MAX_RENDER_SECONDS), 1.0, disabled=not threshold_controls_enabled)
+                    fluidsynth_master_gain = st.slider("FluidSynth master gain", 0.05, 2.00, float(FLUIDSYNTH_MASTER_GAIN), 0.05, disabled=not threshold_controls_enabled)
+                    advanced_params.update({
+                        "master_target_peak": master_target_peak,
+                        "master_target_rms": master_target_rms,
+                        "max_render_seconds": max_render_seconds,
+                        "fluidsynth_master_gain": fluidsynth_master_gain,
+                    })
 
-        # ── Tab 4 · Instruments ──────────────────────────────────────────────
+            with sy_right:                
+                with st.container(border=True):
+                    st.markdown('<div class="param-group-label">Event gates</div>', unsafe_allow_html=True)
+                    chord_double_hit_high_freq_threshold = st.slider("Chord double-hit high-frequency threshold", 0.00, 1.00, 0.22, 0.01, disabled=not threshold_controls_enabled)
+                    complexity_step_threshold = st.slider("Melody density threshold", 0.00, 1.00, 0.52, 0.01, disabled=not threshold_controls_enabled)
+                    melody_energy_gate = st.slider("Melody energy gate", 0.00, 1.00, 0.10, 0.01, disabled=not threshold_controls_enabled)
+                    texture_density_threshold = st.slider("Texture activation threshold", 0.00, 1.00, 0.28, 0.01, disabled=not threshold_controls_enabled)
+                    percussion_density_threshold = st.slider("Percussion activation threshold", 0.00, 1.00, 0.18, 0.01, disabled=not threshold_controls_enabled)
+                    advanced_params.update({
+                        "chord_double_hit_high_freq_threshold": chord_double_hit_high_freq_threshold,
+                        "complexity_step_threshold": complexity_step_threshold,
+                        "melody_energy_gate": melody_energy_gate,
+                        "texture_density_threshold": texture_density_threshold,
+                        "percussion_density_threshold": percussion_density_threshold,
+                    })
+
+        # ── Tab 6 · Instruments ──────────────────────────────────────────────
         with tab_inst:
             choices  = get_instrument_choices_with_none(synthesizer_type)
             fallback = choices[1] if len(choices) > 1 else "None"
@@ -1928,10 +2443,7 @@ def render_app_tab() -> None:
 
             if instrument_mode != "Manual":
                 if controls_active and isinstance(cache, dict):
-                    st.markdown(
-                        '<div class="param-group-label">Auto-selected instruments</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown('<div class="param-group-label">Auto-selected instruments</div>', unsafe_allow_html=True)
                     _layer_names = ["Main", "Texture", "Bass", "Pad", "Chord", "Solo"]
                     _auto_html = '<div class="result-meta">' + "".join(
                         f'<div class="result-meta-item">{_layer_names[i]} <span>{defaults[i]}</span></div>'
@@ -1940,7 +2452,7 @@ def render_app_tab() -> None:
                     st.markdown(_auto_html, unsafe_allow_html=True)
                     st.markdown("")
                 st.info(
-                    "Set **Instrument layer selection** to **Manual** in the Synthesizer tab "
+                    "Set **Instrument layer selection** to **Manual** in the Synth & Mix tab "
                     "to choose instruments and gain for each layer individually."
                 )
             else:
@@ -2053,19 +2565,40 @@ def render_app_tab() -> None:
     if st.session_state.run_requested and uploaded_image is not None:
         progress_bar = progress_bar_placeholder.progress(0)
         try:
-            rerun_after = False
+            def _progress(label: str, percent: int) -> None:
+                percent = int(clamp(percent, 0, 100))
+                progress_status_placeholder.info(f"{label} — {percent}%")
+                progress_bar.progress(percent)
+
+            def _stepper(base: int, top: int, total_hint: int):
+                state = {"i": 0}
+                def _callback(label: str) -> None:
+                    state["i"] += 1
+                    span = max(1, top - base)
+                    pct = min(top, base + int(round(span * state["i"] / max(1, total_hint))))
+                    _progress(label, pct)
+                return _callback
+
+            analysis_params_signature = make_signature(image_id=uploaded_hash, params=advanced_params)
 
             # ── Phase 1: first run on this image → use auto parameters ────────
             if not controls_active:
-                rerun_after = True
-                progress_status_placeholder.info("Analysing photo — 10%")
-                progress_bar.progress(10)
-                original_analysis = analyze_image(uploaded_image, 0.0, np.random.default_rng(0))
+                _progress("Starting photo analysis", 2)
+                original_analysis = analyze_image(
+                    uploaded_image,
+                    0.0,
+                    np.random.default_rng(0),
+                    params=advanced_params,
+                    step_callback=_stepper(4, 30, 7),
+                )
                 st.session_state["photo_analysis_cache"] = {
-                    "image_id": uploaded_hash, "analysis": original_analysis,
+                    "image_id": uploaded_hash,
+                    "params_signature": analysis_params_signature,
+                    "analysis": original_analysis,
                 }
                 f0: Dict[str, float] = original_analysis["features"]  # type: ignore[assignment]
-                mn, mx, df = compute_bar_settings(f0)
+                _progress("Automatic bar/complexity/variation defaults", 32)
+                mn, mx, df = compute_bar_settings(f0, params=advanced_params)
                 st.session_state["parameter_defaults"] = {
                     "image_id": uploaded_hash, "bar_min": mn, "bar_max": mx, "bar_default": df,
                     "variation_default": f0.get(
@@ -2086,28 +2619,48 @@ def render_app_tab() -> None:
                     pad="Warm pad", chord="Soft piano", solo="Flute",
                     mapping="Scientific", bpm=None,
                     gains=[0.0, -2.0, 0.0, -8.0, -3.0, -1.0],
+                    advanced_params=advanced_params,
                 )
                 analysis = original_analysis
 
             # ── Phase 2: subsequent runs → use current slider values ──────────
             else:
-                progress_status_placeholder.info("Analysing photo — 10%")
-                progress_bar.progress(10)
+                _progress("Preparing original photo analysis", 2)
                 _cache = st.session_state.get("photo_analysis_cache")
-                original_analysis = (
-                    _cache["analysis"]
-                    if isinstance(_cache, dict) and _cache.get("image_id") == uploaded_hash
-                    else analyze_image(uploaded_image, 0.0, np.random.default_rng(0))
-                )
+                if (
+                    isinstance(_cache, dict)
+                    and _cache.get("image_id") == uploaded_hash
+                    and _cache.get("params_signature") == analysis_params_signature
+                ):
+                    original_analysis = _cache["analysis"]
+                    _progress("Reusing cached original photo maps", 10)
+                else:
+                    original_analysis = analyze_image(
+                        uploaded_image,
+                        0.0,
+                        np.random.default_rng(0),
+                        params=advanced_params,
+                        step_callback=_stepper(4, 30, 7),
+                    )
                 st.session_state["photo_analysis_cache"] = {
-                    "image_id": uploaded_hash, "analysis": original_analysis,
+                    "image_id": uploaded_hash,
+                    "params_signature": analysis_params_signature,
+                    "analysis": original_analysis,
                 }
                 _seed = int(
-                    hashlib.sha256(f"{uploaded_hash}:{random_factor}".encode()).hexdigest()[:16], 16
+                    hashlib.sha256(f"{uploaded_hash}:{random_factor}:{analysis_params_signature}".encode()).hexdigest()[:16], 16
                 )
-                analysis = analyze_image(
-                    uploaded_image, float(random_factor), np.random.default_rng(_seed)
-                )
+                if int(random_factor) == 0:
+                    analysis = original_analysis
+                    _progress("Using original maps for composition", 32)
+                else:
+                    analysis = analyze_image(
+                        uploaded_image,
+                        float(random_factor),
+                        np.random.default_rng(_seed),
+                        params=advanced_params,
+                        step_callback=_stepper(30, 42, 7),
+                    )
                 effective = dict(
                     bars=int(number_of_bars),
                     variation=float(variation_strength),
@@ -2124,11 +2677,11 @@ def render_app_tab() -> None:
                         main_gain_db, texture_gain_db, bass_gain_db,
                         pad_gain_db, chord_gain_db, solo_gain_db,
                     ],
+                    advanced_params=advanced_params,
                 )
 
             # ── Generate composition ──────────────────────────────────────────
-            progress_status_placeholder.info("Generating composition — 35%")
-            progress_bar.progress(35)
+            _progress("Generating composition", 43)
             events, info = generate_composition(
                 analysis,
                 effective["bars"],  effective["complexity"], effective["variation"],
@@ -2137,19 +2690,25 @@ def render_app_tab() -> None:
                 effective["pad"],   effective["chord"],       effective["solo"],
                 effective["mapping"], effective["bpm"],
                 *effective["gains"],
+                params=advanced_params,
+                step_callback=_stepper(43, 62, 7),
             )
 
             # ── Render audio ──────────────────────────────────────────────────
-            progress_status_placeholder.info("Rendering audio — 65%")
-            progress_bar.progress(65)
-            audio_arr, synth_message = render_backend(events, info, effective["synth"])
-            audio_arr = normalize_master_audio(audio_arr)
+            _progress("Rendering waveform / FluidSynth backend", 65)
+            audio_arr, synth_message = render_backend(events, info, effective["synth"], params=advanced_params)
+            _progress("Master bus normalization", 78)
+            audio_arr = normalize_master_audio(
+                audio_arr,
+                target_peak=get_float_param(advanced_params, "master_target_peak", MASTER_TARGET_PEAK, 0.10, 0.98),
+                target_rms=get_float_param(advanced_params, "master_target_rms", MASTER_TARGET_RMS, 0.01, 0.50),
+            )
 
             # ── Encode output files ───────────────────────────────────────────
-            progress_status_placeholder.info("Encoding output files — 88%")
-            progress_bar.progress(88)
+            _progress("WAV and MIDI encoding", 86)
             wav_bytes_out  = audio_to_wav_bytes(audio_arr, DEFAULT_SAMPLE_RATE)
             midi_bytes_out = midi_bytes_from_events(events, info.tempo)
+            _progress("MP3 encoding", 93)
             mp3_bytes_out, mp3_message = audio_to_mp3_bytes(audio_arr, DEFAULT_SAMPLE_RATE)
 
             # ── Store result ──────────────────────────────────────────────────
