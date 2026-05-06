@@ -62,7 +62,7 @@ def render_portfolio_links() -> None:
 
         label_html = html.escape(item["label"]) if show_label else ""
         href = html.escape(item["url"])
-        icon = html.escape(item.get("icon", ""))
+        icon = html.escape(item.get("icon_url", item.get("icon", "")))
         links_html_parts.append(
             f'<a class="{link_class}" href="{href}" target="_blank" title="{html.escape(title)}">'
             f'<img src="{icon}" alt="{html.escape(item["platform"])}" />'
@@ -196,6 +196,22 @@ def _output_stem(image_name: str, max_len: int = 22) -> str:
     base = os.path.splitext(image_name or "photo")[0]
     base = re.sub(r"[^\w\-]", "_", base)[:max_len].strip("_") or "photo"
     return f"photosono-{base}"
+
+
+def st_image_full_width(image: object, **kwargs: object) -> None:
+    """Display an image using the full available column width.
+
+    Streamlit versions differ on image sizing:
+    - recent versions prefer width="stretch";
+    - older versions raise a TypeError for string widths and require
+      use_container_width=True.
+
+    This wrapper keeps the UI compatible with both behaviours.
+    """
+    try:
+        st.image(image, width="stretch", **kwargs)
+    except TypeError:
+        st.image(image, use_container_width=True, **kwargs)
 
 
 def load_input_image_from_streamlit() -> tuple[
@@ -487,7 +503,7 @@ def render_app_tab() -> None:
             ) = load_input_image_from_streamlit()
 
             if uploaded_image is not None:
-                st.image(uploaded_image, width="stretch")
+                st_image_full_width(uploaded_image)
                 if input_is_default:
                     st.markdown(
                         f'<div class="small-caption">{DEFAULT_IMAGE_CAPTION}</div>',
@@ -1121,7 +1137,7 @@ def render_app_tab() -> None:
                     ("shadow_highlight_map", "Highlights (red) · shadows (blue)", None),
                 ]:
                     st.markdown(f'<div class="section-label">{_title}</div>', unsafe_allow_html=True)
-                    st.image(plot_map(_maps[_key], _title, _cmap), width="stretch")
+                    st_image_full_width(plot_map(_maps[_key], _title, _cmap))
             with pa_col2:
                 st.markdown('<div class="section-label">Metrics</div>', unsafe_allow_html=True)
                 _m = _feats
@@ -1168,7 +1184,7 @@ def render_app_tab() -> None:
             for _pi, (_pt, _pimg) in enumerate(_plots):
                 with _aa_cols[_pi % 3]:
                     st.markdown(f'<div class="section-label">{_pt}</div>', unsafe_allow_html=True)
-                    st.image(_pimg, width="stretch")
+                    st_image_full_width(_pimg)
 
     # =========================================================================
     # Computation block — runs only when run_requested is True
