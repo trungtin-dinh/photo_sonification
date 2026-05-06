@@ -32,11 +32,11 @@ Photo Sonification convertit une image fixe en une courte composition musicale.
 
 L'application ne réalise pas de reconnaissance sémantique. Elle ne détecte pas les visages, les objets, les lieux, les émotions ou les scènes. Elle considère l'image comme un signal bidimensionnel et extrait des descripteurs visuels mesurables : luminance, contraste, densité de contours, entropie de texture, symétrie, statistiques de couleur, distribution d'énergie de Fourier et saillance.
 
-Ces descripteurs sont ensuite associés à des variables musicales : tonalité, gamme, tempo, registre, densité de notes, équilibre des couches, choix des instruments, placement stéréo et contour mélodique.
+Ces descripteurs sont ensuite associés à des variables musicales : tonalité, gamme, tempo, registre, densité de notes, équilibre des couches, choix des instruments, placement stéréo et contour mélodique. Cette association est appelée ici mise en correspondance musicale, ou mapping musical lorsque l'on fait référence au terme utilisé dans l'interface ou dans le code.
 
 L'objectif n'est pas d'obtenir la seule musique correcte pour une photographie. Une telle réponse unique n'existe pas. L'objectif est de construire une correspondance déterministe et interprétable entre structure visuelle et structure musicale.
 
-Lorsque le paramètre Random factor vaut zéro, la même image et les mêmes paramètres produisent le même résultat.
+Lorsque le paramètre Random Factor vaut zéro, la même image et les mêmes paramètres produisent le même résultat.
 
 L'idée centrale peut s'écrire sous la forme
 
@@ -44,7 +44,7 @@ $$
 \text{image}
 \xrightarrow{\text{extraction de descripteurs}}
 \mathbf{f}
-\xrightarrow{\text{mapping musical}}
+\xrightarrow{\text{mise en correspondance musicale}}
 \mathcal{E}
 \xrightarrow{\text{synthèse audio}}
 \text{audio} + \text{MIDI},
@@ -84,7 +84,7 @@ Par exemple :
 | Symétrie | similarité par réflexion | stabilité ou variation |
 | Saillance | régions visuellement dominantes | accents solo |
 
-Le mapping est volontairement explicite. Cela distingue l'application d'un modèle génératif de type boîte noire. L'utilisateur peut inspecter les descripteurs et comprendre pourquoi une image donnée produit un résultat lent, sombre et lisse, ou au contraire un résultat rapide, brillant et dense.
+La mise en correspondance est volontairement explicite. Cela distingue l'application d'un modèle génératif de type boîte noire. L'utilisateur peut inspecter les descripteurs et comprendre pourquoi une image donnée produit un résultat lent, sombre et lisse, ou au contraire un résultat rapide, brillant et dense.
 
 ---
 
@@ -95,9 +95,9 @@ Le pipeline complet est divisé en quatre étapes.
 | Étape | Entrée | Sortie | Rôle |
 |---|---|---|---|
 | Analyse d'image | image RGB | descripteurs et cartes visuelles | décrire l'image comme un signal |
-| Mapping musical | vecteur de descripteurs | tonalité, tempo, couches, instruments | convertir les grandeurs visuelles en décisions musicales |
+| Mise en correspondance musicale | vecteur de descripteurs | tonalité, tempo, couches, instruments | convertir les grandeurs visuelles en décisions musicales |
 | Génération d'événements | réglages musicaux | événements de notes | construire une composition symbolique |
-| Rendu | événements de notes | waveform, MIDI, MP3, graphiques | synthétiser et exporter le résultat |
+| Rendu | événements de notes | forme d'onde, MIDI, MP3, graphiques | synthétiser et exporter le résultat |
 
 Un événement de note est représenté par
 
@@ -181,6 +181,26 @@ $$
 
 où $\varepsilon>0$ évite la division par zéro.
 
+### 4.1 Vocabulaire technique court
+
+Certains termes sont conservés en anglais lorsqu'ils correspondent à un nom d'interface, à un standard logiciel ou à un usage courant en audio numérique.
+
+| Terme | Sens dans ce document |
+|---|---|
+| Mapping | mise en correspondance entre descripteurs visuels et décisions musicales |
+| MIDI | représentation symbolique d'une musique sous forme de notes, durées, vélocités, instruments et canaux |
+| Vélocité | intensité d'une note dans la représentation MIDI; dans le rendu audio, elle est utilisée comme amplitude normalisée avant mixage |
+| Registre | zone de hauteur utilisée par les notes, par exemple grave, médium ou aigu |
+| Panoramique stéréo | répartition d'un son entre le canal gauche et le canal droit |
+| Forme d'onde | signal audio temporel, représenté par une suite d'échantillons |
+| Buffer | zone mémoire où les échantillons audio sont accumulés avant d'être écrits ou lus |
+| Spectrogramme | représentation temps-fréquence de l'énergie audio |
+| SoundFont | banque de sons utilisée par un synthétiseur MIDI pour transformer des notes symboliques en audio |
+| FluidSynth | moteur logiciel capable de rendre des événements MIDI à partir d'une SoundFont |
+| Moteur de synthèse | partie du programme qui transforme les événements de notes en signal audio |
+| Graine déterministe | valeur calculée à partir des descripteurs de l'image pour obtenir un choix pseudo-aléatoire mais reproductible |
+| Jitter déterministe | petite perturbation pseudo-aléatoire calculée de façon reproductible pour éviter des choix trop répétitifs |
+
 ---
 
 ## 5. Prétraitement de l'image
@@ -217,7 +237,7 @@ $$
 \mu_Y=\frac{1}{HW}\sum_{(x,y)\in\Omega}Y(x,y).
 $$
 
-Une faible valeur de $\mu_Y$ indique une image globalement sombre. Une valeur élevée indique une image globalement lumineuse. Dans le mapping musical, cette grandeur influence le registre et la tendance de gamme.
+Une faible valeur de $\mu_Y$ indique une image globalement sombre. Une valeur élevée indique une image globalement lumineuse. Dans la mise en correspondance musicale, cette grandeur influence le registre et la tendance de gamme.
 
 ### 6.3 Contraste
 
@@ -299,7 +319,7 @@ Musicalement, $D_e$ augmente l'activité rythmique et peut augmenter le tempo da
 
 ### 7.3 Entropie de texture
 
-La carte de gradient normalisée est résumée par un histogramme à $K$ bins. Soit $p_k$ la probabilité du bin $k$. L'entropie de texture est
+La carte de gradient normalisée est résumée par un histogramme à $K$ classes d'histogramme. Soit $p_k$ la probabilité du classe $k$. L'entropie de texture est
 
 $$
 H_{\mathrm{tex}}=-\frac{1}{\log_2K}\sum_{k=1}^{K}p_k\log_2(p_k+\varepsilon).
@@ -503,7 +523,7 @@ $$
 E_{\mathrm{diagonal}}=1-E_{\mathrm{horizontal}}-E_{\mathrm{vertical}}.
 $$
 
-Ces descripteurs aident à interpréter le panneau d'analyse photo. Ils sont moins centraux que les énergies radiales par bande pour le mapping musical.
+Ces descripteurs aident à interpréter le panneau d'analyse photo. Ils sont moins centraux que les énergies radiales par bande pour la mise en correspondance musicale.
 
 ### 9.7 Score de pic périodique
 
@@ -521,7 +541,7 @@ Une valeur élevée indique un motif régulier, par exemple des rayures, des car
 
 ## 10. Saillance visuelle
 
-La saillance estime quelles régions de l'image sont visuellement dominantes. Dans cette application, la saillance n'est pas sémantique. Elle est calculée à partir de l'intensité des contours, de la rareté de couleur, de la rareté de luminance et d'un léger biais central.
+La saillance estime quelles régions de l'image sont visuellement dominantes. Dans cette application, la saillance n'est pas sémantique : elle ne cherche pas à savoir si une région contient un visage, un objet ou un texte. Elle mesure seulement des contrastes locaux et globaux. Elle est calculée à partir de l'intensité des contours, de la rareté de couleur, de la rareté de luminance et d'un léger biais central.
 
 ### 10.1 Rareté de couleur
 
@@ -621,7 +641,7 @@ où $\mathbf{p}$ représente les paramètres contrôlés par l'utilisateur, comm
 
 ## 12. Des descripteurs d'image aux décisions musicales
 
-Le tableau suivant donne le mapping pratique utilisé pour interpréter la sortie.
+Le tableau suivant donne la correspondance pratique utilisée pour interpréter la sortie. Il ne faut pas le lire comme une loi esthétique générale, mais comme la règle interne de l'application : une variation d'un descripteur entraîne une variation prévisible d'un ou plusieurs paramètres musicaux.
 
 | Descripteur | Conséquence musicale |
 |---|---|
@@ -695,7 +715,7 @@ $$
 B_0=\operatorname{round}\left(\operatorname{interp}\left(Q_B,[0,1],[B_0^{lo},B_0^{hi}]\right)\right).
 $$
 
-Le backend impose
+Le moteur impose
 
 $$
 B_{\max}>B_{\min},
@@ -706,6 +726,8 @@ $$
 ---
 
 ## 14. Tonalité, gamme et tempo
+
+Cette section introduit les conventions musicales minimales utilisées par l'application. La tonalité fixe un centre de gravité harmonique. La gamme définit les hauteurs autorisées autour de ce centre. Le tempo fixe la vitesse temporelle de la composition. Ces choix restent volontairement simples afin que le lien avec les descripteurs visuels reste lisible.
 
 ### 14.1 Tonalité à partir de la teinte
 
@@ -798,6 +820,8 @@ $$
 
 ## 15. Harmonie et progression d'accords
 
+Une harmonie est représentée ici par des accords, c'est-à-dire des groupes de notes jouées simultanément ou presque simultanément. Une progression d'accords est une suite d'accords qui se répète ou évolue au fil des mesures. L'application utilise des progressions simples pour fournir une base harmonique stable aux couches Main, Pad, Chord et Bass.
+
 Soit la gamme sélectionnée
 
 $$
@@ -812,7 +836,7 @@ $$
 \operatorname{chord}(d)=\{i_d,i_{d+2},i_{d+4}\},
 $$
 
-avec un retour d'octave lorsqu'un indice dépasse la longueur de la gamme.
+avec un retour périodique dans la gamme lorsqu'un indice dépasse la longueur de la gamme.
 
 L'application sélectionne une progression d'accords dans un petit ensemble déterministe. Pour les gammes à sept notes, on trouve par exemple
 
@@ -820,7 +844,7 @@ $$
 [0,4,5,3],\qquad [0,5,3,4],\qquad [0,2,5,4],\qquad [0,3,1,4].
 $$
 
-La progression sélectionnée dépend des descripteurs de l'image au moyen d'une seed déterministe :
+La progression sélectionnée dépend des descripteurs de l'image au moyen d'une graine déterministe (seed) :
 
 $$
 \mathrm{seed}=\operatorname{round}\left(997\bar{h}+113P_F+71H_{\mathrm{tex}}+53c_x^{\mathcal{S}}\right).
@@ -831,6 +855,8 @@ Si la force de variation est suffisamment élevée, la seconde moitié de la com
 ---
 
 ## 16. Couches musicales
+
+La composition est organisée en couches afin de séparer les rôles musicaux. Cette séparation rend le résultat plus lisible : la mélodie porte la trajectoire principale, la basse donne l'ancrage grave, le pad soutient l'harmonie, les accords marquent la structure, la texture ajoute des détails rapides et le solo met en avant les régions saillantes de l'image.
 
 ### 16.1 Mélodie principale
 
@@ -948,6 +974,8 @@ Le solo est donc une lecture mélodique éparse des régions les plus visuelleme
 
 ## 17. Sélection des instruments
 
+Le choix des instruments n'est pas seulement esthétique. Il participe à la traduction du signal visuel : une image lisse et sombre doit pouvoir produire un timbre plus doux et plus grave, tandis qu'une image brillante, contrastée ou périodique doit pouvoir produire des attaques plus nettes ou des timbres plus percussifs. La sélection automatique cherche donc une cohérence entre descripteurs visuels, rôle de la couche et famille instrumentale.
+
 ### 17.1 Mode de synthèse Simple
 
 Le mode Simple utilise des instruments internes de synthèse additive. Les exemples typiques incluent soft piano, harp, music box, bright bell, marimba, cello-like bass, warm pad et glass pad.
@@ -966,7 +994,7 @@ En mode Automatic, l'application sélectionne les instruments à partir des desc
 
 ### 17.2 Mode GeneralUser GS
 
-Le mode GeneralUser GS utilise des noms de programmes General MIDI. Le rendu nécessite FluidSynth et une SoundFont GeneralUser GS. S'ils ne sont pas disponibles, l'application revient au backend de synthèse Simple tout en conservant la même structure d'événements musicaux.
+Le mode GeneralUser GS utilise des noms de programmes General MIDI. Le rendu nécessite FluidSynth et une SoundFont GeneralUser GS. S'ils ne sont pas disponibles, l'application revient au moteur de synthèse Simple tout en conservant la même structure d'événements musicaux.
 
 Chaque programme General MIDI appartient à une famille : piano, chromatic percussion, organ, guitar, bass, strings, brass, reed, pipe, synth lead, synth pad et autres.
 
@@ -996,7 +1024,7 @@ $$
 
 Des bonus propres à certains programmes affinent la sélection. Par exemple, les programmes de type cloche reçoivent des bonus provenant des hautes lumières, de l'énergie haute fréquence et de la saillance. Les programmes de basse reçoivent des bonus provenant des ombres et de l'énergie basse fréquence.
 
-Un jitter déterministe est ajouté pour éviter de toujours sélectionner le même programme pour des images similaires :
+Une variation pseudo-aléatoire déterministe (jitter) est ajouté pour éviter de toujours sélectionner le même programme pour des images similaires :
 
 $$
 \operatorname{score}(p,\ell)=W_\ell(f_p)+\operatorname{bonus}(p)+0.42u(p,\ell),
@@ -1022,9 +1050,11 @@ Le gain modifie la vélocité des notes avant le rendu. Les vélocités finales 
 
 ## 18. Rendu audio
 
+Le rendu audio transforme la composition symbolique en signal échantillonné. À ce stade, les événements de notes ne sont plus seulement des objets abstraits contenant une hauteur et une durée : ils deviennent des formes d'onde placées dans le temps, pondérées par une vélocité, réparties en stéréo, puis additionnées dans un même signal.
+
 ### 18.1 Buffer stéréo
 
-Les événements sont rendus dans une waveform stéréo à
+Les événements sont rendus dans une forme d'onde stéréo à
 
 $$
 f_s=44100\ \mathrm{Hz}.
@@ -1036,11 +1066,11 @@ $$
 n_i=\operatorname{round}(t_if_s).
 $$
 
-La waveform de l'événement est synthétisée, multipliée par sa vélocité, panoramiquée, puis ajoutée au buffer stéréo.
+La forme d'onde de l'événement est synthétisée, multipliée par sa vélocité, panoramiquée, puis ajoutée au buffer stéréo.
 
 ### 18.2 Panoramique à puissance constante
 
-Chaque événement possède une valeur de pan
+Chaque événement possède une valeur de panoramique
 
 $$
 p\in[-1,1].
@@ -1094,9 +1124,9 @@ $$
 
 Il s'agit de la convention standard du tempérament égal avec A4 à 440 Hz.
 
-### 18.6 Bus master
+### 18.6 Bus de sortie
 
-Après sommation de toutes les couches, l'application applique un gain master et évite le clipping. Un limiteur typique peut être compris comme
+Après sommation de toutes les couches, l'application applique un gain global et évite le clipping. Un limiteur typique peut être compris comme
 
 $$
 x_{\mathrm{out}}[n]=\frac{x[n]}{\max(1,\max_n |x[n]|)}.
@@ -1110,13 +1140,13 @@ Le but n'est pas de masteriser la musique de manière professionnelle. Il s'agit
 
 L'application peut exporter le résultat en audio et en MIDI.
 
-La sortie audio est la waveform rendue. L'export MP3 est utile pour une écoute rapide et le partage. L'export MIDI est utile pour l'inspection, l'édition et la réutilisation dans une station audionumérique.
+La sortie audio est la forme d'onde rendue. L'export MP3 est utile pour une écoute rapide et le partage. L'export MIDI est utile pour l'inspection, l'édition et la réutilisation dans une station audionumérique.
 
 Les graphiques d'analyse incluent généralement :
 
 | Graphique | Signification |
 |---|---|
-| waveform | amplitude dans le domaine temporel |
+| forme d'onde | amplitude dans le domaine temporel |
 | spectrogramme | distribution temps-fréquence |
 | magnitude de Fourier | contenu fréquentiel audio global |
 | spectres par couche | contribution de chaque couche musicale |
@@ -1127,7 +1157,7 @@ Ces graphiques ne sont pas décoratifs. Ils permettent à l'utilisateur de véri
 
 ## 20. Random Factor
 
-Le Random factor introduit des perturbations contrôlées avant le mapping musical. Il est conçu pour créer de la variation tout en conservant l'identité principale de l'image.
+Le Random Factor introduit des perturbations contrôlées avant la mise en correspondance musicale. Il ne remplace pas l'analyse de l'image par un tirage aléatoire : il modifie légèrement certains signaux intermédiaires afin de produire une autre réalisation musicale d'une même image. Il est donc conçu pour créer de la variation tout en conservant l'identité principale de l'image.
 
 Soit $\alpha\in[0,1]$ le facteur aléatoire normalisé. Une perturbation spatiale peut s'écrire
 
@@ -1147,7 +1177,7 @@ où $\gamma(u,v)$ est une petite modulation aléatoire.
 
 Le signal perturbé modifie la composition générée, mais l'analyse photo affichée peut toujours être calculée à partir de l'image originale afin de garder l'interprétation visuelle stable.
 
-Lorsque Random factor vaut zéro, la reproductibilité est stricte. Lorsqu'il augmente, l'application devient plus exploratoire.
+Lorsque Random Factor vaut zéro, la reproductibilité est stricte. Lorsqu'il augmente, l'application devient plus exploratoire.
 
 ---
 
@@ -1155,27 +1185,27 @@ Lorsque Random factor vaut zéro, la reproductibilité est stricte. Lorsqu'il au
 
 | Groupe de paramètres | Paramètre | Effet |
 |---|---|---|
-| Analyse d'image | analysis size | contrôle la résolution d'extraction des descripteurs |
-| Analyse d'image | luminance percentiles | définissent la plage dynamique robuste |
-| Analyse d'image | shadow/highlight thresholds | contrôlent les masques sombre et lumineux |
-| Analyse de contours | edge percentile | contrôle la détection adaptative des contours |
-| Analyse de contours | edge minimum threshold | empêche un bruit faible de devenir un contour |
-| Analyse de Fourier | low/mid/high band limits | définit les bandes de fréquence radiale |
-| Analyse de Fourier | DC exclusion radius | retire la composante moyenne centrale |
-| Analyse de Fourier | periodic peak percentiles | contrôle le descripteur de périodicité |
-| Saillance | edge/color/luminance weights | contrôlent la composition de la saillance |
-| Saillance | center bias | contrôle la préférence pour les régions centrales |
-| Musique | tempo mode | Scientific, Balanced, Musical ou Manual |
-| Musique | scale mode | gamme automatique ou fixe |
-| Musique | number of bars | contrôle la longueur de la composition |
-| Musique | complexity | contrôle la densité de notes et la texture |
-| Musique | variation strength | contrôle les changements de sections |
+| Analyse d'image | taille d'analyse (analysis size) | contrôle la résolution d'extraction des descripteurs |
+| Analyse d'image | percentiles de luminance | définissent la plage dynamique robuste |
+| Analyse d'image | seuils d'ombres et de hautes lumières | contrôlent les masques sombre et lumineux |
+| Analyse de contours | percentile de contour | contrôle la détection adaptative des contours |
+| Analyse de contours | seuil minimal de contour | empêche un bruit faible de devenir un contour |
+| Analyse de Fourier | limites des bandes basse/moyenne/haute (low/mid/high) | définit les bandes de fréquence radiale |
+| Analyse de Fourier | rayon d'exclusion DC | retire la composante moyenne centrale |
+| Analyse de Fourier | percentiles de pic périodique | contrôle le descripteur de périodicité |
+| Saillance | poids contour/couleur/luminance | contrôlent la composition de la saillance |
+| Saillance | biais central | contrôle la préférence pour les régions centrales |
+| Musique | mode de tempo | Scientific, Balanced, Musical ou Manual |
+| Musique | mode de gamme | gamme automatique ou fixe |
+| Musique | nombre de mesures | contrôle la longueur de la composition |
+| Musique | complexité | contrôle la densité de notes et la texture |
+| Musique | force de variation | contrôle les changements de sections |
 | Instruments | mode | Simple, GeneralUser GS ou Manual |
-| Instruments | layer gains | contrôlent les amplitudes relatives des couches |
-| Sortie | master gain | contrôle le niveau sonore final |
-| Sortie | Random factor | contrôle la variation stochastique |
+| Instruments | gains des couches | contrôlent les amplitudes relatives des couches |
+| Sortie | gain global | contrôle le niveau sonore final |
+| Sortie | Random Factor | contrôle la variation aléatoire reproductible ou exploratoire selon sa valeur |
 
-Une règle utile pour régler les paramètres est de ne modifier qu'un seul groupe à la fois. Si l'objectif est de comprendre le mapping, commencez avec Random factor à zéro et les instruments automatiques activés.
+Une règle utile pour régler les paramètres est de ne modifier qu'un seul groupe à la fois. Si l'objectif est de comprendre la mise en correspondance, commencez avec Random Factor à zéro et les instruments automatiques activés.
 
 ---
 
@@ -1187,7 +1217,7 @@ Premièrement, inspectez les cartes d'analyse d'image. Une carte de luminance li
 
 Deuxièmement, inspectez le résumé musical. Vérifiez la tonalité, la gamme, le tempo, la complexité, la force de variation et les instruments sélectionnés. Ces valeurs constituent le pont entre les descripteurs visuels et l'audio final.
 
-Troisièmement, écoutez en observant les graphiques audio. La waveform montre l'amplitude au cours du temps. Le spectrogramme montre l'évolution de l'énergie selon la fréquence. Les spectres par couche expliquent quelle couche contribue à quelle partie du son.
+Troisièmement, écoutez en observant les graphiques audio. La forme d'onde montre l'amplitude au cours du temps. Le spectrogramme montre l'évolution de l'énergie selon la fréquence. Les spectres par couche expliquent quelle couche contribue à quelle partie du son.
 
 Si le résultat paraît surprenant, remontez aux descripteurs. Une image sombre peut générer des accents brillants si elle contient de petites hautes lumières. Une image simple peut générer de la variation si elle est fortement asymétrique. Une image calme peut produire un motif rythmique régulier si son spectre de Fourier contient des pics périodiques.
 
@@ -1199,7 +1229,7 @@ Photo Sonification est un système interprétable fondé sur des descripteurs, e
 
 Il ne comprend pas le sujet de la photo. Une montagne, un visage et un bâtiment peuvent produire des musiques similaires si leurs descripteurs de luminance, de texture, de couleur et de Fourier sont similaires.
 
-Le mapping est conçu, et non appris. C'est une force pour la transparence et une limite pour l'universalité esthétique. Un autre concepteur pourrait choisir d'autres mappings et obtenir un autre comportement musical.
+La mise en correspondance est conçu, et non appris. C'est une force pour la transparence et une limite pour l'universalité esthétique. Un autre concepteur pourrait choisir d'autres règles de correspondance et obtenir un autre comportement musical.
 
 La relation entre couleur et harmonie n'est pas une loi physique. C'est une convention artistique contrôlée, implémentée par des règles déterministes.
 
@@ -1207,6 +1237,6 @@ Les descripteurs de Fourier capturent la structure spatiale globale. Ils ne repr
 
 Le modèle de saillance est bas niveau. Il met en évidence le contraste, la rareté et la centralité, mais il ne sait pas ce qui est significatif pour un observateur humain au sens sémantique.
 
-Le backend de synthèse est volontairement léger. Il convient à une application pédagogique en ligne, mais il ne remplace pas des outils professionnels de production musicale.
+Le moteur de synthèse est volontairement léger. Il convient à une application pédagogique en ligne, mais il ne remplace pas des outils professionnels de production musicale.
 
 La meilleure manière de lire l'application n'est donc pas de la considérer comme un compositeur automatique, mais comme un instrument de traitement du signal : elle expose comment une structure visuelle mesurable peut être transformée en son.

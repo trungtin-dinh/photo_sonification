@@ -1,3 +1,9 @@
+# Photo Sonification
+
+Course-style documentation for the English version of the application
+
+This document is designed as an applied course note. It first presents the general idea of the application, then describes the image descriptors, the musical mapping rules and the audio rendering stage. The intended level is that of a Master's student with basic knowledge of signal processing or image processing. The necessary musical and software concepts are recalled when they appear in the model.
+
 ## Table of Contents
 
 1. [Purpose of the App](#1-purpose-of-the-app)
@@ -32,11 +38,11 @@ Photo Sonification converts a still image into a short musical composition.
 
 The application does not perform semantic recognition. It does not detect faces, objects, places, emotions or scenes. It treats the image as a two-dimensional signal and extracts measurable visual descriptors: luminance, contrast, edge density, texture entropy, symmetry, color statistics, Fourier energy distribution and saliency.
 
-These descriptors are then mapped to musical variables: key, scale, tempo, register, note density, layer balance, instrument choice, stereo placement and melodic contour.
+These descriptors are then associated with musical variables: tonality, scale, tempo, register, note density, layer balance, instrument choice, stereo placement and melodic contour. This association is called musical mapping in this document.
 
-The objective is not to obtain the unique correct music for a photograph. No such unique answer exists. The objective is to build a deterministic and interpretable correspondence between visual structure and musical structure.
+The objective is not to obtain the only correct music for a photograph. No such unique answer exists. The objective is to build a deterministic and interpretable correspondence between visual structure and musical structure.
 
-With Random factor set to zero, the same image and the same parameters produce the same result.
+When the Random Factor parameter is set to zero, the same image and the same parameters produce the same result.
 
 The central idea can be written as
 
@@ -52,7 +58,7 @@ $$
 
 where $\mathbf{f}$ is the feature vector and $\mathcal{E}$ is the set of generated note events.
 
-A personal way to summarize the app is this: the photo is not translated as a sentence; it is read as a signal. The music is the trace left by that reading.
+A personal way to summarize the application is this: the photo is not translated as a sentence; it is read as a signal. The music is the trace left by that reading.
 
 ---
 
@@ -70,21 +76,21 @@ $$
 R(x,y),G(x,y),B(x,y) \in [0,1].
 $$
 
-The app does not directly convert RGB values into sound. It first computes descriptors that have a clear signal-processing meaning.
+The application does not directly convert RGB values into sound. It first computes descriptors that have a clear signal-processing meaning.
 
 For example:
 
 | Image property | Signal-processing interpretation | Possible musical role |
 |---|---|---|
-| Mean luminance | average signal level | register, mood, scale tendency |
+| Mean luminance | average signal level | register, general color, scale tendency |
 | Contrast | dispersion around the mean | energy, tempo, velocity |
 | Edge density | local spatial variation | rhythmic density, attacks |
-| Fourier high-frequency energy | fine detail and rapid spatial changes | texture, brightness, tempo |
-| Fourier low-frequency energy | large smooth structures | pads, bass, sustained layers |
+| High-frequency Fourier energy | fine details and rapid spatial changes | texture, brightness, tempo |
+| Low-frequency Fourier energy | large smooth structures | pads, bass, sustained layers |
 | Symmetry | similarity under reflection | stability or variation |
 | Saliency | visually dominant regions | solo accents |
 
-The mapping is intentionally explicit. This makes the app different from a black-box generative model. A user can inspect the features and understand why a given image produced a slow, dark, smooth result or a fast, bright, dense result.
+The mapping is intentionally explicit. This makes the application different from a black-box generative model. The user can inspect the descriptors and understand why a given image produced a slow, dark, smooth result or, conversely, a fast, bright, dense result.
 
 ---
 
@@ -94,8 +100,8 @@ The complete pipeline is divided into four stages.
 
 | Stage | Input | Output | Role |
 |---|---|---|---|
-| Image analysis | RGB image | visual descriptors and maps | describe the image as a signal |
-| Musical mapping | descriptor vector | tonality, tempo, layers, instruments | convert visual quantities into musical decisions |
+| Image analysis | RGB image | descriptors and visual maps | describe the image as a signal |
+| Musical mapping | feature vector | tonality, tempo, layers, instruments | convert visual quantities into musical decisions |
 | Event generation | musical settings | note events | build a symbolic composition |
 | Rendering | note events | waveform, MIDI, MP3, plots | synthesize and export the result |
 
@@ -117,7 +123,7 @@ where:
 | $p_i$ | stereo pan in $[-1,1]$ |
 | $\ell_i$ | layer label |
 
-The app generates several layers. The Main layer carries the principal melody. Texture adds short events and arpeggios. Bass provides low-register support. Pad provides sustained harmonic background. Chord adds harmonic hits. Solo adds saliency-driven accents when the GeneralUser GS mode is used.
+The application generates several layers. The Main layer carries the principal melody. Texture adds short events and arpeggios. Bass provides low-register support. Pad provides a sustained harmonic background. Chord adds harmonic hits. Solo adds saliency-driven accents when the GeneralUser GS mode is used.
 
 ---
 
@@ -125,7 +131,7 @@ The app generates several layers. The Main layer carries the principal melody. T
 
 | Symbol | Definition |
 |---|---|
-| $H,W$ | image height and width after analysis resizing |
+| $H,W$ | image height and width after resizing for analysis |
 | $\Omega$ | pixel grid, $\Omega=\{0,\ldots,W-1\}\times\{0,\ldots,H-1\}$ |
 | $R,G,B$ | normalized color channels |
 | $Y$ | luminance image |
@@ -139,7 +145,7 @@ The app generates several layers. The Main layer carries the principal melody. T
 | $S$ | symmetry score |
 | $\bar{h}$ | dominant hue |
 | $\overline{\mathrm{Sat}}$ | mean saturation |
-| $w_{\mathrm{warm}}$ | warmth score |
+| $w_{\mathrm{warm}}$ | chromatic warmth score |
 | $F(u,v)$ | centered 2D Fourier transform of luminance |
 | $r(u,v)$ | normalized radial spatial frequency |
 | $E_{\mathrm{low}},E_{\mathrm{mid}},E_{\mathrm{high}}$ | Fourier energy proportions |
@@ -181,11 +187,31 @@ $$
 
 where $\varepsilon>0$ prevents division by zero.
 
+### 4.1 Short Technical Vocabulary
+
+Some terms are kept in English because they correspond to interface labels, software standards or common usage in digital audio.
+
+| Term | Meaning in this document |
+|---|---|
+| Mapping | correspondence between visual descriptors and musical decisions |
+| MIDI | symbolic representation of music using notes, durations, velocities, instruments and channels |
+| Velocity | intensity of a note in the MIDI representation; during audio rendering, it is used as a normalized amplitude before mixing |
+| Register | pitch region used by the notes, for example low, middle or high |
+| Stereo pan | distribution of a sound between the left and right channels |
+| Waveform | time-domain audio signal, represented by a sequence of samples |
+| Buffer | memory area where audio samples are accumulated before being written or played |
+| Spectrogram | time-frequency representation of audio energy |
+| SoundFont | sound bank used by a MIDI synthesizer to transform symbolic notes into audio |
+| FluidSynth | software engine able to render MIDI events using a SoundFont |
+| Synthesis engine | part of the program that transforms note events into an audio signal |
+| Deterministic seed | value computed from image descriptors to obtain a pseudo-random but reproducible choice |
+| Deterministic jitter | small reproducible pseudo-random perturbation used to avoid overly repetitive choices |
+
 ---
 
 ## 5. Image Preprocessing
 
-The input file is loaded as an RGB image. EXIF orientation is corrected when available. If the image is too large, it is resized for analysis. This resize only affects feature extraction and computation time. It does not redefine the conceptual model of the image.
+The input file is loaded as an RGB image. EXIF orientation is corrected when available. If the image is too large, it is resized for analysis. This resizing only affects feature extraction and computation time. It does not redefine the conceptual model of the image.
 
 The normalized RGB channels are
 
@@ -193,15 +219,15 @@ $$
 R(x,y),G(x,y),B(x,y) \in [0,1].
 $$
 
-Large images contain more details, but they also increase the cost of Fourier analysis and saliency computation. For an online app, the analysis resolution is therefore a compromise between precision and responsiveness.
+Large images contain more details, but they also increase the cost of Fourier analysis and saliency computation. For an online application, the analysis resolution is therefore a compromise between precision and responsiveness.
 
 ---
 
 ## 6. Luminance, Contrast, Shadows and Highlights
 
-### 6.1 Perceptual luminance
+### 6.1 Perceptual Luminance
 
-Many image structures are more clearly described in luminance than in raw RGB channels. The app uses the BT.709 luminance formula:
+Many image structures are described more clearly in luminance than in raw RGB channels. The application uses the BT.709 luminance formula:
 
 $$
 Y(x,y)=0.2126R(x,y)+0.7152G(x,y)+0.0722B(x,y).
@@ -209,7 +235,7 @@ $$
 
 The green channel has the largest coefficient because human brightness perception is more sensitive to green than to blue.
 
-### 6.2 Mean luminance
+### 6.2 Mean Luminance
 
 The mean luminance is
 
@@ -217,7 +243,7 @@ $$
 \mu_Y=\frac{1}{HW}\sum_{(x,y)\in\Omega}Y(x,y).
 $$
 
-A low $\mu_Y$ indicates a globally dark image. A high $\mu_Y$ indicates a globally bright image. In the musical mapping, this influences register and scale tendency.
+A low value of $\mu_Y$ indicates a globally dark image. A high value indicates a globally bright image. In the musical mapping, this quantity influences register and scale tendency.
 
 ### 6.3 Contrast
 
@@ -227,9 +253,9 @@ $$
 \sigma_Y=\sqrt{\frac{1}{HW}\sum_{(x,y)\in\Omega}\left(Y(x,y)-\mu_Y\right)^2}.
 $$
 
-A high value means that the image contains strong intensity variation. It generally leads to more energy in the musical result.
+A high value means that the image contains strong intensity variations. It generally leads to a more energetic musical result.
 
-### 6.4 Robust dynamic range
+### 6.4 Robust Dynamic Range
 
 The robust dynamic range is computed from percentiles:
 
@@ -241,7 +267,7 @@ where $p_L$ and $p_H$ are user-controlled lower and upper percentiles. The defau
 
 Percentiles are used instead of the absolute minimum and maximum because one isolated black or white pixel should not dominate the descriptor.
 
-### 6.5 Shadow and highlight masks
+### 6.5 Shadow and Highlight Masks
 
 The shadow mask is defined by
 
@@ -257,7 +283,7 @@ $$
 \left\{(x,y):Y(x,y)>\min\left(\tau_h,P_{p_H}(Y)-\delta_h\right)\right\}.
 $$
 
-The proportions are
+The corresponding proportions are
 
 $$
 s=\frac{|\mathcal{M}_{\mathrm{shadow}}|}{HW},
@@ -265,13 +291,13 @@ s=\frac{|\mathcal{M}_{\mathrm{shadow}}|}{HW},
 h=\frac{|\mathcal{M}_{\mathrm{highlight}}|}{HW}.
 $$
 
-The shadow proportion strengthens bass and darker timbres. The highlight proportion strengthens bright attacks, bells, arpeggios and accents.
+The shadow proportion strengthens the bass and darker timbres. The highlight proportion strengthens bright attacks, bells, arpeggios and accents.
 
 ---
 
 ## 7. Edges, Texture and Symmetry
 
-### 7.1 Gradient magnitude
+### 7.1 Gradient Magnitude
 
 Edges are local changes in luminance. The gradient magnitude is
 
@@ -285,19 +311,19 @@ $$
 \hat{G}(x,y)=\frac{G(x,y)-\min(G)}{\max(G)-\min(G)+\varepsilon}.
 $$
 
-### 7.2 Edge density
+### 7.2 Edge Density
 
-The edge density is the proportion of pixels whose normalized gradient is above an adaptive threshold:
+The edge density is the proportion of pixels whose normalized gradient exceeds an adaptive threshold:
 
 $$
 D_e=\frac{1}{HW}\left|\left\{(x,y):\hat{G}(x,y)>\max\left(\tau_e,P_{q_e}(\hat{G})\right)\right\}\right|.
 $$
 
-The percentile term adapts the threshold to the image. The fixed threshold prevents very small fluctuations from being counted as edges.
+The percentile term adapts the threshold to the image. The fixed threshold prevents very weak fluctuations from being counted as edges.
 
 Musically, $D_e$ increases rhythmic activity and can raise the tempo in Scientific and Balanced modes.
 
-### 7.3 Texture entropy
+### 7.3 Texture Entropy
 
 The normalized gradient map is summarized by a histogram with $K$ bins. Let $p_k$ be the probability of bin $k$. The texture entropy is
 
@@ -305,9 +331,9 @@ $$
 H_{\mathrm{tex}}=-\frac{1}{\log_2K}\sum_{k=1}^{K}p_k\log_2(p_k+\varepsilon).
 $$
 
-The division by $\log_2K$ normalizes the value to approximately $[0,1]$.
+The division by $\log_2K$ approximately normalizes the value to $[0,1]$.
 
-A smooth image produces a low entropy. A visually complex image produces a high entropy. The app uses this descriptor to estimate composition complexity and number of bars.
+A smooth image produces a low entropy. A visually complex image produces a high entropy. The application uses this descriptor to estimate composition complexity and number of bars.
 
 ### 7.4 Symmetry
 
@@ -327,7 +353,7 @@ $$
 S=0.70S_{LR}+0.30S_{TB}.
 $$
 
-A high symmetry score corresponds to visual stability. In the app, this reduces automatic variation. A low symmetry score corresponds to stronger imbalance or directional structure. This increases variation, especially in the second half of the music.
+A high symmetry score corresponds to visual stability. In the application, this reduces automatic variation. A low symmetry score corresponds to stronger imbalance or directional structure. This increases variation, especially in the second half of the music.
 
 ---
 
@@ -351,13 +377,13 @@ $$
 \overline{\mathrm{Sat}}=\frac{1}{HW}\sum_{(x,y)\in\Omega}\mathrm{Sat}(x,y).
 $$
 
-High saturation supports brighter or more colorful musical choices. Low saturation favors softer or more neutral choices.
+High saturation favors brighter or more colorful musical choices. Low saturation favors softer or more neutral choices.
 
-### 8.2 Circular mean hue
+### 8.2 Circular Mean Hue
 
-Hue is circular. A direct arithmetic mean is incorrect because hue values near 0 and 1 represent nearby colors, not opposite colors.
+Hue is circular. A direct arithmetic mean is incorrect because hue values near 0 and 1 represent neighboring colors, not opposite colors.
 
-The app computes a weighted circular mean. Let $h(x,y)\in[0,1)$ be the hue. Each pixel receives the weight
+The application computes a weighted circular mean. Let $h(x,y)\in[0,1)$ be the hue. Each pixel receives the weight
 
 $$
 w(x,y)=\mathrm{Sat}(x,y)\left(0.25+Y(x,y)\right).
@@ -374,7 +400,7 @@ $$
 
 Saturated and bright pixels contribute more strongly to the tonal center.
 
-### 8.3 Warmth
+### 8.3 Chromatic Warmth
 
 The warmth score is
 
@@ -382,7 +408,7 @@ $$
 w_{\mathrm{warm}}=\frac{1}{HW}\sum_{(x,y)\in\Omega}\left(R(x,y)-B(x,y)\right).
 $$
 
-Positive values indicate a warmer image. Negative values indicate a cooler image. This value influences scale tendency and instrument affinity.
+Positive values indicate a warmer image. Negative values indicate a cooler image. This quantity influences scale tendency and instrument affinity.
 
 ---
 
@@ -390,9 +416,9 @@ Positive values indicate a warmer image. Negative values indicate a cooler image
 
 Fourier analysis describes how the energy of the luminance image is distributed across spatial frequencies.
 
-Low spatial frequencies correspond to large smooth structures. High spatial frequencies correspond to fine details, edges, texture and noise.
+Low spatial frequencies correspond to large smooth structures. High spatial frequencies correspond to fine details, edges, textures and noise.
 
-### 9.1 Windowed luminance
+### 9.1 Windowed Luminance
 
 Before computing the FFT, the mean luminance is removed and a separable Hann window is applied:
 
@@ -408,7 +434,7 @@ $$
 
 The window reduces boundary discontinuities. Without this step, the FFT would implicitly treat the image as a periodic tile and introduce artificial frequency content at the borders.
 
-### 9.2 Two-dimensional Fourier transform
+### 9.2 Two-Dimensional Fourier Transform
 
 The discrete two-dimensional Fourier transform is
 
@@ -425,7 +451,7 @@ $$
 
 then normalizes it to $[0,1]$ for visualization. The logarithm is necessary because Fourier magnitudes often have a large dynamic range.
 
-### 9.3 Radial frequency
+### 9.3 Radial Frequency
 
 For each frequency bin, the normalized radial frequency is
 
@@ -435,14 +461,14 @@ $$
 
 The central DC region is excluded from band energy computations because it mostly contains the average component, not the spatial structure.
 
-### 9.4 Low, mid and high frequency energies
+### 9.4 Low, Mid and High Frequency Energies
 
 The spectrum is split into radial bands:
 
 | Band | Typical range | Interpretation |
 |---|---|---|
 | Low | $[r_{DC},0.14)$ | large smooth structures |
-| Mid | $[0.14,0.34)$ | medium-scale shapes |
+| Mid | $[0.14,0.34)$ | intermediate-scale shapes |
 | High | $[0.34,1]$ | edges, fine textures, micro-details |
 
 For a band $\mathcal{B}$, the normalized energy is
@@ -459,9 +485,9 @@ $$
 E_{\mathrm{low}}+E_{\mathrm{mid}}+E_{\mathrm{high}}\approx 1.
 $$
 
-Low-frequency energy supports sustained layers such as pad and bass. High-frequency energy increases texture, attacks, bright timbres and sometimes tempo.
+Low-frequency energy favors sustained layers such as pad and bass. High-frequency energy increases texture, attacks, bright timbres and sometimes tempo.
 
-### 9.5 Fourier centroid and bandwidth
+### 9.5 Fourier Centroid and Bandwidth
 
 The radial centroid is
 
@@ -475,9 +501,9 @@ $$
 B_F=\sqrt{\frac{\sum \left(r(u,v)-\rho_c\right)^2|F(u,v)|^2}{\sum |F(u,v)|^2+\varepsilon}}.
 $$
 
-A high centroid means that the image contains many fine-scale structures. A high bandwidth means that energy is spread across several spatial scales.
+A high centroid means that the image contains many fine-scale structures. A high bandwidth means that energy is distributed across several spatial scales.
 
-### 9.6 Directional energies
+### 9.6 Directional Energies
 
 The angle of a frequency bin is
 
@@ -485,7 +511,7 @@ $$
 \theta(u,v)=\operatorname{atan2}(v,u).
 $$
 
-Using an orientation tolerance $\omega_o$, the horizontal and vertical directional energies are estimated by
+With an orientation tolerance $\omega_o$, the horizontal and vertical directional energies are estimated by
 
 $$
 E_{\mathrm{horizontal}}=
@@ -503,11 +529,11 @@ $$
 E_{\mathrm{diagonal}}=1-E_{\mathrm{horizontal}}-E_{\mathrm{vertical}}.
 $$
 
-These descriptors help interpret the photo analysis panel. They are less central than the radial band energies for the musical mapping.
+These descriptors help interpret the photo analysis panel. They are less central than the radial band energies for musical mapping.
 
-### 9.7 Periodic peak score
+### 9.7 Periodic Peak Score
 
-Repeated visual patterns produce isolated strong peaks in the Fourier spectrum. The app summarizes this property with a percentile ratio:
+Repeated visual patterns produce isolated strong peaks in the Fourier spectrum. The application summarizes this property with a percentile ratio:
 
 $$
 P_F=\operatorname{clip}\left(
@@ -515,15 +541,15 @@ P_F=\operatorname{clip}\left(
 \right).
 $$
 
-A high value indicates a regular pattern such as stripes, tiles, windows or repeated texture. Musically, it encourages loop-like behavior, repeated motifs and mallet-like timbres.
+A high value indicates a regular pattern, such as stripes, tiles, windows or repeated texture. Musically, it favors loop-like behavior, repeated motifs and mallet-like timbres.
 
 ---
 
 ## 10. Visual Saliency
 
-Saliency estimates which regions of the image are visually dominant. In this app, saliency is not semantic. It is computed from edge strength, color rarity, luminance rarity and a small center bias.
+Saliency estimates which regions of the image are visually dominant. In this application, saliency is not semantic: it does not try to determine whether a region contains a face, an object or text. It only measures local and global contrasts. It is computed from edge strength, color rarity, luminance rarity and a slight center bias.
 
-### 10.1 Color rarity
+### 10.1 Color Rarity
 
 Let the mean RGB vector be
 
@@ -540,7 +566,7 @@ $$
 
 A pixel is color-salient if its color differs strongly from the global average.
 
-### 10.2 Luminance rarity
+### 10.2 Luminance Rarity
 
 The luminance rarity is
 
@@ -548,11 +574,11 @@ $$
 L_r(x,y)=|Y(x,y)-\mu_Y|.
 $$
 
-Both very bright and very dark pixels can be salient when they are unusual relative to the whole image.
+Very bright and very dark pixels can both be salient when they are unusual relative to the whole image.
 
-### 10.3 Saliency combination
+### 10.3 Saliency Combination
 
-The app normalizes the edge, color rarity and luminance rarity maps. The base saliency is
+The application normalizes the edge, color rarity and luminance rarity maps. The base saliency is
 
 $$
 B_s(x,y)=w_e\hat{G}(x,y)+w_c\hat{C}_r(x,y)+w_l\hat{L}_r(x,y),
@@ -579,9 +605,9 @@ $$
 \mathcal{S}(x,y)=\operatorname{normalize}_{[0,1]}\left((1-\lambda_c)B_s(x,y)+\lambda_cC_B(x,y)\right).
 $$
 
-The center bias is deliberately weak. It reflects the common photographic tendency to place subjects near the center, but it should not erase the actual image structure.
+The center bias is deliberately weak. It reflects the common photographic tendency to place subjects near the center, without erasing the actual structure of the image.
 
-### 10.4 Saliency mask
+### 10.4 Saliency Mask
 
 A salient mask is defined by
 
@@ -590,13 +616,13 @@ $$
 \left\{(x,y):\mathcal{S}(x,y)\ge\max\left(\tau_{\mathcal{S}},P_{q_{\mathcal{S}}}(\mathcal{S})\right)\right\}.
 $$
 
-From this mask, the app computes peak saliency, mean saliency, saliency area, saliency centroid and saliency spread. These descriptors drive the Solo layer.
+From this mask, the application computes peak saliency, mean saliency, saliency area, saliency centroid and saliency spread. These descriptors drive the Solo layer.
 
 ---
 
 ## 11. Feature Vector
 
-After analysis, the app can be understood as having built the feature vector
+After analysis, the application can be understood as having built the feature vector
 
 $$
 \mathbf{f}=\left[
@@ -609,19 +635,19 @@ $$
 
 Here $\eta_{\mathcal{S}}$ denotes a compact saliency strength score, and $(c_x^{\mathcal{S}},c_y^{\mathcal{S}})$ denotes the saliency centroid.
 
-The rest of the app is a deterministic function of this vector and the user parameters:
+The rest of the application is a deterministic function of this vector and the user parameters:
 
 $$
 \mathcal{E}=\Phi(\mathbf{f},\mathbf{p}),
 $$
 
-where $\mathbf{p}$ represents user-controlled parameters such as tempo mode, scale mode, number of bars, complexity, variation strength, instrument mode and layer gains.
+where $\mathbf{p}$ represents user-controlled parameters such as tempo mode, scale mode, number of bars, complexity, variation strength, instrumentation mode and layer gains.
 
 ---
 
 ## 12. From Image Descriptors to Musical Decisions
 
-The following table gives the practical mapping used to interpret the output.
+The following table gives the practical correspondence used to interpret the output. It should not be read as a general aesthetic law, but as the internal rule of the application: a variation of one descriptor leads to a predictable variation of one or several musical parameters.
 
 | Descriptor | Musical consequence |
 |---|---|
@@ -630,28 +656,28 @@ The following table gives the practical mapping used to interpret the output.
 | $s$ | bass strength, darker timbres, tempo reduction |
 | $h$ | bright timbres, accents, chord activity |
 | $D_e$ | rhythmic density, attacks, tempo contribution |
-| $H_{\mathrm{tex}}$ | automatic complexity and bar estimate |
+| $H_{\mathrm{tex}}$ | automatic complexity and number-of-bars estimate |
 | $S$ | inverse control of variation strength |
 | $\bar{h}$ | tonal center |
-| $\overline{\mathrm{Sat}}$ | colorfulness of scale and instruments |
+| $\overline{\mathrm{Sat}}$ | color of scales and instruments |
 | $w_{\mathrm{warm}}$ | warm/cool tendency |
 | $E_{\mathrm{low}}$ | pad weight, bass weight, smooth timbres |
 | $E_{\mathrm{high}}$ | texture activity, bright instruments, fast events |
 | $\rho_c$ | fine-detail contribution to Scientific tempo |
 | $B_F$ | richness of texture |
-| $P_F$ | repetitive motifs and mallet affinity |
+| $P_F$ | repetitive motifs and mallet-like timbre affinity |
 | saliency peak and area | number and strength of solo accents |
 | saliency position | timing and pitch of solo accents |
-| bright centroid | stereo pan of main and chord layers |
-| shadow centroid | stereo pan of bass layer |
+| bright centroid | stereo pan of the main and chord layers |
+| shadow centroid | stereo pan of the bass layer |
 
-This table should be read as a causal map inside the app. For instance, if the output is fast and dense, the likely causes are high edge density, high high-frequency energy and high texture entropy. If the output is slow and heavy, the likely causes are high shadow proportion, low high-frequency energy and strong low-frequency content.
+This table should be read as a causal map inside the application. For instance, if the output is fast and dense, the likely causes are high edge density, strong high-frequency energy and high texture entropy. If the output is slow and heavy, the likely causes are a high shadow proportion, weak high-frequency energy and significant low-frequency content.
 
 ---
 
 ## 13. Automatic Structure: Complexity, Variation and Number of Bars
 
-### 13.1 Automatic complexity
+### 13.1 Automatic Complexity
 
 The automatic complexity is derived from texture entropy:
 
@@ -661,7 +687,7 @@ $$
 
 The user controls the allowed range. The resulting complexity affects note density, melodic activity and texture activation.
 
-### 13.2 Automatic variation strength
+### 13.2 Automatic Variation Strength
 
 Variation is derived from lack of symmetry:
 
@@ -671,7 +697,7 @@ $$
 
 A symmetric image gives a lower variation strength. An asymmetric image gives a higher variation strength. This rule is musically useful because symmetry often corresponds to stability, while asymmetry often suggests movement or tension.
 
-### 13.3 Number of bars
+### 13.3 Number of Bars
 
 The number of bars is estimated from a weighted activity score:
 
@@ -679,9 +705,9 @@ $$
 Q_B=w_tH_{\mathrm{tex}}+w_eD_e+w_hE_{\mathrm{high}}+w_pP_F.
 $$
 
-The weights are normalized internally. A higher $Q_B$ corresponds to more visual activity and therefore allows a longer composition.
+The weights are normalized internally. A higher value of $Q_B$ corresponds to stronger visual activity and therefore allows a longer composition.
 
-The app maps $Q_B$ into valid ranges:
+The application maps $Q_B$ into valid ranges:
 
 $$
 B_{\min}=\operatorname{round}\left(\operatorname{interp}\left(Q_B,[0,1],[B_{\min}^{lo},B_{\min}^{hi}]\right)\right),
@@ -695,7 +721,7 @@ $$
 B_0=\operatorname{round}\left(\operatorname{interp}\left(Q_B,[0,1],[B_0^{lo},B_0^{hi}]\right)\right).
 $$
 
-The backend enforces
+The engine enforces
 
 $$
 B_{\max}>B_{\min},
@@ -707,9 +733,11 @@ $$
 
 ## 14. Tonality, Scale and Tempo
 
-### 14.1 Key from hue
+This section introduces the minimal musical conventions used by the application. Tonality defines a harmonic center of gravity. The scale defines the allowed pitches around this center. The tempo defines the temporal speed of the composition. These choices remain intentionally simple so that the link with the visual descriptors remains readable.
 
-The dominant hue is mapped to one of the twelve pitch classes:
+### 14.1 Key from Hue
+
+The dominant hue is associated with one of the twelve pitch classes:
 
 $$
 k=\operatorname{round}(12\bar{h})\bmod 12.
@@ -721,7 +749,7 @@ $$
 \{C,C\#,D,D\#,E,F,F\#,G,G\#,A,A\#,B\}.
 $$
 
-The root MIDI note is shifted according to brightness:
+The MIDI root note is shifted according to brightness:
 
 $$
 \mathrm{root}=\operatorname{clip}\left(
@@ -732,9 +760,9 @@ $$
 
 Darker images tend to use lower registers. Brighter images tend to use higher registers.
 
-### 14.2 Scale selection
+### 14.2 Scale Selection
 
-The app uses the following scale families.
+The application uses the following scale families.
 
 | Scale | Intervals in semitones |
 |---|---|
@@ -745,13 +773,13 @@ The app uses the following scale families.
 | Dorian | $0,2,3,5,7,9,10$ |
 | Lydian | $0,2,4,6,7,9,11$ |
 
-When Scale is set to Automatic, the selection depends on brightness, warmth, saturation and contrast. Bright warm images tend toward major-like or Lydian colors. Darker images tend toward natural minor or Dorian colors.
+When Scale is set to Automatic, the selection depends on brightness, chromatic warmth, saturation and contrast. Bright warm images tend toward major-like or Lydian colors. Darker images tend toward natural minor or Dorian colors.
 
-This rule should be understood as a design choice, not as a universal theory of color and harmony.
+This rule should be understood as a design choice, not as a universal theory of the relation between color and harmony.
 
-### 14.3 Tempo modes
+### 14.3 Tempo Modes
 
-The app offers four tempo modes.
+The application offers four tempo modes.
 
 Scientific mode gives strong weight to structural descriptors:
 
@@ -798,6 +826,8 @@ $$
 
 ## 15. Harmony and Chord Progression
 
+Harmony is represented here by chords, that is, groups of notes played simultaneously or almost simultaneously. A chord progression is a sequence of chords that repeats or evolves over the bars. The application uses simple progressions to provide a stable harmonic basis for the Main, Pad, Chord and Bass layers.
+
 Let the selected scale be
 
 $$
@@ -812,9 +842,9 @@ $$
 \operatorname{chord}(d)=\{i_d,i_{d+2},i_{d+4}\},
 $$
 
-with octave wrapping when an index exceeds the scale length.
+with periodic wrapping in the scale when an index exceeds the scale length.
 
-The app selects a chord progression from a small deterministic pool. For seven-note scales, examples include
+The application selects a chord progression from a small deterministic set. For seven-note scales, examples include
 
 $$
 [0,4,5,3],\qquad [0,5,3,4],\qquad [0,2,5,4],\qquad [0,3,1,4].
@@ -832,7 +862,9 @@ If variation strength is high enough, the second half of the composition shifts 
 
 ## 16. Musical Layers
 
-### 16.1 Main melody
+The composition is organized into layers in order to separate musical roles. This separation makes the result easier to read: the melody carries the main trajectory, the bass gives low-register anchoring, the pad sustains harmony, the chords mark the structure, the texture adds fast details and the solo highlights salient regions of the image.
+
+### 16.1 Main Melody
 
 The image is read from left to right. For $B_{\mathrm{bars}}$ bars, the image is divided into
 
@@ -842,7 +874,7 @@ $$
 
 vertical slices.
 
-For slice $i$, the app computes local luminance statistics and a vertical brightness centroid. A percentile-trimmed weight is used:
+For slice $i$, the application computes local luminance statistics and a vertical brightness centroid. A percentile-trimmed weight is used:
 
 $$
 w_i(y)=\max\left(Y_i(y)-P_{35}(Y_i),0\right).
@@ -854,11 +886,11 @@ $$
 \operatorname{pos}_i=\operatorname{clip}\left(1-c_{y,i}+0.18(\bar{Y}_i-\mu_Y),0,1\right).
 $$
 
-A high bright region gives a higher pitch. A low dark region gives a lower pitch. The selected position is quantized to the current scale.
+A bright region located near the top gives a higher pitch. A dark region located near the bottom gives a lower pitch. The selected position is quantized to the current scale.
 
-The melody density depends on Complexity. Low-complexity settings skip more slices. High-complexity settings allow more slices to produce notes.
+Melodic density depends on Complexity. Low-complexity settings skip more slices. High-complexity settings allow more slices to produce notes.
 
-### 16.2 Melodic variation
+### 16.2 Melodic Variation
 
 The composition is divided into broad sections. A section-dependent offset is applied to the melody:
 
@@ -874,9 +906,9 @@ $$
 
 where $V$ is the variation strength.
 
-This keeps the melody tied to the image while avoiding a strictly mechanical repetition.
+This keeps the melody tied to the image while avoiding strictly mechanical repetition.
 
-### 16.3 Pad layer
+### 16.3 Pad Layer
 
 The Pad layer sustains the current chord over the bar. Its velocity increases with low-frequency energy:
 
@@ -886,13 +918,13 @@ $$
 
 A smooth image therefore creates a stronger sustained background.
 
-### 16.4 Chord layer
+### 16.4 Chord Layer
 
-The Chord layer plays harmonic hits based on the current chord progression. If high-frequency energy exceeds the double-hit threshold, a second chord hit is added halfway through the bar.
+The Chord layer plays harmonic hits based on the current chord progression. If high-frequency energy exceeds the double-hit threshold, a second chord is added halfway through the bar.
 
 This links visual detail to harmonic activity.
 
-### 16.5 Bass layer
+### 16.5 Bass Layer
 
 The Bass layer uses a root/fifth pattern, usually placing the root on beat 1 and the fifth on beat 3.
 
@@ -904,7 +936,7 @@ $$
 
 Dark smooth images therefore produce stronger bass support.
 
-### 16.6 Texture layer
+### 16.6 Texture Layer
 
 Texture density is estimated by
 
@@ -914,11 +946,11 @@ $$
 
 where $C$ is the user-controlled complexity.
 
-If $\rho_{\mathrm{tex}}$ is above the texture activation threshold, the app adds arpeggio-like events. If it exceeds a fast threshold, the arpeggio rate increases.
+If $\rho_{\mathrm{tex}}$ exceeds the texture activation threshold, the application adds arpeggio-like events. If it exceeds a fast threshold, the arpeggio rate increases.
 
-A separate short tick layer can activate when texture density is high. In the MIDI export, these events are placed on the percussion channel.
+A separate short tick layer can also activate when texture density is high. In the MIDI export, these events are placed on the percussion channel.
 
-### 16.7 Saliency solo layer
+### 16.7 Saliency-Driven Solo Layer
 
 The Solo layer is available in GeneralUser GS mode. It converts salient image points into sparse melodic accents.
 
@@ -948,13 +980,15 @@ The solo is therefore a sparse melodic reading of the most visually dominant reg
 
 ## 17. Instrument Selection
 
-### 17.1 Simple synthesis mode
+Instrument choice is not only aesthetic. It participates in the translation of the visual signal: a smooth dark image should be able to produce a softer and lower timbre, while a bright, contrasted or periodic image should be able to produce sharper attacks or more percussive timbres. Automatic selection therefore seeks coherence between visual descriptors, layer role and instrumental family.
+
+### 17.1 Simple Synthesis Mode
 
 Simple mode uses internal additive synthesis instruments. Typical examples include soft piano, harp, music box, bright bell, marimba, cello-like bass, warm pad and glass pad.
 
 This mode is self-contained. It does not require an external SoundFont.
 
-In Automatic mode, the app selects instruments from image descriptors. Examples:
+In Automatic mode, the application selects instruments from image descriptors. Examples:
 
 | Visual condition | Instrument tendency |
 |---|---|
@@ -964,13 +998,13 @@ In Automatic mode, the app selects instruments from image descriptors. Examples:
 | smooth low-frequency image | pad, glass pad, soft piano |
 | detailed high-frequency image | pluck, bell, arpeggiated timbres |
 
-### 17.2 GeneralUser GS mode
+### 17.2 GeneralUser GS Mode
 
-GeneralUser GS mode uses General MIDI program names. Rendering requires FluidSynth and a GeneralUser GS SoundFont. If they are unavailable, the app falls back to the Simple synthesis backend while preserving the same musical event structure.
+GeneralUser GS mode uses General MIDI program names. Rendering requires FluidSynth and a GeneralUser GS SoundFont. If they are unavailable, the application falls back to the Simple synthesis engine while preserving the same musical event structure.
 
 Each General MIDI program belongs to a family: piano, chromatic percussion, organ, guitar, bass, strings, brass, reed, pipe, synth lead, synth pad and others.
 
-For each layer, the app computes family affinities from image descriptors. For example, the smoothness score is
+For each layer, the application computes family affinities from image descriptors. For example, the smoothness score is
 
 $$
 \lambda_{\mathrm{smooth}}=\operatorname{clip}\left(E_{\mathrm{low}}+0.35(1-E_{\mathrm{high}})+0.25S,0,1\right).
@@ -982,13 +1016,13 @@ $$
 \lambda_{\mathrm{bright}}=\operatorname{clip}\left(0.55\mu_Y+0.45h,0,1\right).
 $$
 
-For the Main layer, a piano family affinity can be written as
+For the Main layer, an affinity with the piano family can be written as
 
 $$
 W_{\mathrm{main}}(\mathrm{piano})=0.35+0.35\lambda_{\mathrm{smooth}}.
 $$
 
-A pipe family affinity can be written as
+An affinity with the pipe family can be written as
 
 $$
 W_{\mathrm{main}}(\mathrm{pipe})=0.18+0.45\lambda_{\mathrm{bright}}+0.20\lambda_{\mathrm{smooth}}.
@@ -996,17 +1030,17 @@ $$
 
 Program-specific bonuses refine the selection. For example, bell-like programs receive bonuses from highlights, high-frequency energy and saliency. Bass programs receive bonuses from shadows and low-frequency energy.
 
-A deterministic jitter is added to avoid always selecting the same program for similar images:
+A deterministic pseudo-random variation, or jitter, is added to avoid always selecting the same program for similar images:
 
 $$
 \operatorname{score}(p,\ell)=W_\ell(f_p)+\operatorname{bonus}(p)+0.42u(p,\ell),
 $$
 
-where $p$ is the program, $\ell$ is the layer, $f_p$ is the family of the program, and $u(p,\ell)$ is a deterministic pseudo-random value derived from the image features.
+where $p$ is the program, $\ell$ is the layer, $f_p$ is the family of the program, and $u(p,\ell)$ is a deterministic pseudo-random value derived from the image descriptors.
 
 This gives variety without losing reproducibility.
 
-### 17.3 Manual mode and layer gains
+### 17.3 Manual Mode and Layer Gains
 
 In Manual mode, the user selects the instrument for each layer.
 
@@ -1022,7 +1056,9 @@ The gain modifies note velocity before rendering. Final velocities are clipped t
 
 ## 18. Audio Rendering
 
-### 18.1 Stereo buffer
+Audio rendering transforms the symbolic composition into a sampled signal. At this stage, note events are no longer only abstract objects containing a pitch and a duration: they become waveforms placed in time, weighted by velocity, distributed in stereo, and then added into the same signal.
+
+### 18.1 Stereo Buffer
 
 Events are rendered into a stereo waveform at
 
@@ -1036,9 +1072,9 @@ $$
 n_i=\operatorname{round}(t_if_s).
 $$
 
-The event waveform is synthesized, multiplied by its velocity, panned and added to the stereo buffer.
+The waveform of the event is synthesized, multiplied by its velocity, panned, then added to the stereo buffer.
 
-### 18.2 Equal-power panning
+### 18.2 Equal-Power Panning
 
 Each event has a pan value
 
@@ -1054,9 +1090,9 @@ g_L=\cos\left(\frac{\pi}{4}(p+1)\right),
  g_R=\sin\left(\frac{\pi}{4}(p+1)\right).
 $$
 
-This is equal-power panning. It reduces the perceived loudness drop that would occur if linear panning were used at the center.
+This is equal-power panning. It reduces the perceived level loss that would appear at the center with linear panning.
 
-### 18.3 ADSR envelope
+### 18.3 ADSR Envelope
 
 Simple synthesis instruments use an Attack-Decay-Sustain-Release envelope:
 
@@ -1070,9 +1106,9 @@ S_L\left(1-\dfrac{n-(N-N_R)}{N_R}\right), & N-N_R\le n<N.
 \end{cases}
 $$
 
-Here $N_A$, $N_D$ and $N_R$ are attack, decay and release lengths in samples, and $S_L$ is the sustain level.
+Here $N_A$, $N_D$ and $N_R$ are the attack, decay and release lengths in samples, and $S_L$ is the sustain level.
 
-### 18.4 Additive synthesis
+### 18.4 Additive Synthesis
 
 In Simple mode, many instruments are built by summing partials:
 
@@ -1084,7 +1120,7 @@ where $f_0$ is the note frequency, $a_q$ is the amplitude of partial $q$, and $\
 
 Different instruments correspond to different partial weights, envelopes, detuning rules and noise components.
 
-### 18.5 MIDI pitch to frequency
+### 18.5 MIDI Pitch to Frequency
 
 A MIDI pitch $m$ is converted to frequency by
 
@@ -1094,40 +1130,40 @@ $$
 
 This is the standard equal-tempered tuning convention with A4 at 440 Hz.
 
-### 18.6 Master bus
+### 18.6 Output Bus
 
-After all layers have been summed, the app applies a master gain and prevents clipping. A typical limiter can be understood as
+After all layers have been summed, the application applies a global gain and prevents clipping. A typical limiter can be understood as
 
 $$
 x_{\mathrm{out}}[n]=\frac{x[n]}{\max(1,\max_n |x[n]|)}.
 $$
 
-The purpose is not to master the music professionally. It is to produce a stable, playable audio file in an online app.
+The purpose is not to master the music professionally. It is to produce a stable, playable audio file in an online application.
 
 ---
 
 ## 19. MIDI, MP3 and Analysis Outputs
 
-The app can export the result as audio and MIDI.
+The application can export the result as audio and MIDI.
 
 The audio output is the rendered waveform. The MP3 export is useful for quick listening and sharing. The MIDI export is useful for inspection, editing and reuse in a digital audio workstation.
 
-The analysis plots usually include:
+The analysis plots generally include:
 
 | Plot | Meaning |
 |---|---|
-| waveform | time-domain amplitude |
+| waveform | amplitude in the time domain |
 | spectrogram | time-frequency distribution |
 | Fourier magnitude | global audio frequency content |
 | per-layer spectra | contribution of each musical layer |
 
-These plots are not decorative. They allow the user to verify whether the generated sound matches the intended structure. For example, a dense texture layer should increase high-frequency activity, while a strong bass layer should appear in the low-frequency range.
+These plots are not decorative. They allow the user to verify whether the generated sound matches the expected structure. For example, a dense texture layer should increase high-frequency activity, while a strong bass layer should appear in the low-frequency range.
 
 ---
 
 ## 20. Random Factor
 
-The Random factor introduces controlled perturbations before the musical mapping. It is designed to create variation while preserving the main identity of the image.
+The Random Factor introduces controlled perturbations before the musical mapping. It does not replace the image analysis with a random draw: it slightly modifies some intermediate signals in order to produce another musical realization of the same image. It is therefore designed to create variation while preserving the main identity of the image.
 
 Let $\alpha\in[0,1]$ be the normalized random factor. A spatial perturbation can be written as
 
@@ -1145,9 +1181,9 @@ $$
 
 where $\gamma(u,v)$ is a small random modulation.
 
-The perturbed signal changes the generated composition, but the displayed photo analysis can still be computed from the original image to keep the visual interpretation stable.
+The perturbed signal modifies the generated composition, but the displayed photo analysis can still be computed from the original image in order to keep the visual interpretation stable.
 
-When Random factor is zero, reproducibility is strict. When it is increased, the app becomes more exploratory.
+When Random Factor is zero, reproducibility is strict. When it increases, the application becomes more exploratory.
 
 ---
 
@@ -1155,41 +1191,41 @@ When Random factor is zero, reproducibility is strict. When it is increased, the
 
 | Parameter group | Parameter | Effect |
 |---|---|---|
-| Image analysis | analysis size | controls feature extraction resolution |
-| Image analysis | luminance percentiles | define robust dynamic range |
-| Image analysis | shadow/highlight thresholds | control dark and bright masks |
+| Image analysis | analysis size | controls the feature extraction resolution |
+| Image analysis | luminance percentiles | define the robust dynamic range |
+| Image analysis | shadow and highlight thresholds | control the dark and bright masks |
 | Edge analysis | edge percentile | controls adaptive edge detection |
-| Edge analysis | edge minimum threshold | prevents weak noise from becoming edges |
-| Fourier analysis | low/mid/high band limits | defines radial frequency bands |
-| Fourier analysis | DC exclusion radius | removes central average component |
-| Fourier analysis | periodic peak percentiles | controls periodicity descriptor |
-| Saliency | edge/color/luminance weights | controls saliency composition |
-| Saliency | center bias | controls preference for central regions |
+| Edge analysis | minimum edge threshold | prevents weak noise from becoming an edge |
+| Fourier analysis | low/mid/high band limits | define the radial frequency bands |
+| Fourier analysis | DC exclusion radius | removes the central average component |
+| Fourier analysis | periodic peak percentiles | control the periodicity descriptor |
+| Saliency | edge/color/luminance weights | control the saliency composition |
+| Saliency | center bias | controls the preference for central regions |
 | Music | tempo mode | Scientific, Balanced, Musical or Manual |
 | Music | scale mode | automatic or fixed scale |
-| Music | number of bars | controls composition length |
+| Music | number of bars | controls the composition length |
 | Music | complexity | controls note density and texture |
 | Music | variation strength | controls section changes |
 | Instruments | mode | Simple, GeneralUser GS or Manual |
-| Instruments | layer gains | controls relative layer amplitudes |
-| Output | master gain | controls final loudness |
-| Output | Random factor | controls stochastic variation |
+| Instruments | layer gains | control the relative amplitudes of the layers |
+| Output | global gain | controls the final sound level |
+| Output | Random Factor | controls reproducible or exploratory random variation depending on its value |
 
-A useful rule for parameter tuning is to change only one group at a time. If the goal is to understand the mapping, start with Random factor at zero and Automatic instruments enabled.
+A useful rule for parameter tuning is to change only one group at a time. If the goal is to understand the mapping, start with Random Factor at zero and automatic instruments enabled.
 
 ---
 
 ## 22. How to Interpret the Result
 
-The app is easiest to understand by reading the output in three passes.
+The application is easiest to understand by reading the output in three passes.
 
-First, inspect the image analysis maps. A smooth luminance map and concentrated low-frequency Fourier spectrum should correspond to a slower, more sustained result. A sharp edge map and strong high-frequency Fourier energy should correspond to more texture and attacks.
+First, inspect the image analysis maps. A smooth luminance map and a Fourier spectrum concentrated in low frequencies should correspond to a slower, more sustained result. A marked edge map and strong high-frequency Fourier energy should correspond to more texture and attacks.
 
-Second, inspect the musical summary. Check the selected key, scale, tempo, complexity, variation strength and instruments. These values are the bridge between the visual descriptors and the final audio.
+Second, inspect the musical summary. Check the tonality, scale, tempo, complexity, variation strength and selected instruments. These values form the bridge between the visual descriptors and the final audio.
 
-Third, listen while looking at the audio plots. The waveform shows amplitude over time. The spectrogram shows how energy evolves across frequency. Per-layer spectra explain which layer contributes to which part of the sound.
+Third, listen while observing the audio plots. The waveform shows amplitude over time. The spectrogram shows how energy evolves across frequency. Per-layer spectra explain which layer contributes to which part of the sound.
 
-If the result seems surprising, trace it back to the descriptors. A dark image can still generate bright accents if it contains small highlights. A simple image can still generate variation if it is strongly asymmetric. A calm image can still produce a regular rhythmic pattern if its Fourier spectrum contains periodic peaks.
+If the result seems surprising, trace it back to the descriptors. A dark image can generate bright accents if it contains small highlights. A simple image can generate variation if it is strongly asymmetric. A calm image can produce a regular rhythmic pattern if its Fourier spectrum contains periodic peaks.
 
 ---
 
@@ -1199,15 +1235,14 @@ Photo Sonification is an interpretable feature-based system, not a semantic imag
 
 It does not understand the subject of the photo. A mountain, a face and a building may produce similar music if their luminance, texture, color and Fourier descriptors are similar.
 
-The mapping is designed, not learned. This is a strength for transparency and a limitation for aesthetic universality. Another designer could choose different mappings and obtain different musical behavior.
+The mapping is designed, not learned. This is a strength for transparency and a limitation for aesthetic universality. Another designer could choose other correspondence rules and obtain different musical behavior.
 
 The relation between color and harmony is not a physical law. It is a controlled artistic convention implemented through deterministic rules.
 
-The Fourier descriptors capture global spatial structure. They do not fully represent local composition, object boundaries or depth.
+Fourier descriptors capture global spatial structure. They do not fully represent local composition, object boundaries or depth.
 
 The saliency model is low-level. It highlights contrast, rarity and centrality, but it does not know what is meaningful to a human observer in a semantic sense.
 
-The synthesis backend is intentionally lightweight. It is suitable for an online educational app, but it is not a replacement for professional music production tools.
+The synthesis engine is intentionally lightweight. It is suitable for an online educational application, but it is not a replacement for professional music production tools.
 
-The best way to read the app is therefore not as an automatic composer, but as a signal-processing instrument: it exposes how measurable visual structure can be transformed into sound.
-
+The best way to read the application is therefore not as an automatic composer, but as a signal-processing instrument: it exposes how measurable visual structure can be transformed into sound.
