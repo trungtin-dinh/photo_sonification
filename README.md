@@ -10,206 +10,197 @@ pinned: false
 license: mit
 ---
 
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
-
 # Photo Sonification
 
-This repository contains an interactive mini app that transforms a photo into a short musical composition.
+Photo Sonification is an interactive app that converts a still image into a short musical composition.
 
-The app is designed as an educational and portfolio demo at the intersection of image processing, signal processing and audio synthesis. It does not use a trained model to interpret the semantic content of the image. Instead, it extracts deterministic visual descriptors from the photo and maps them to musical decisions such as tempo, scale, register, chord progression, melody, instrumentation and layer balance.
+The project is designed as a portfolio demo at the intersection of image processing, signal processing, procedural audio synthesis and human-readable algorithmic mapping. The app does not use a trained model to recognize the semantic content of the image. It does not try to identify faces, objects, scenes or emotions. Instead, it treats the photo as a two-dimensional signal, extracts measurable visual descriptors, and maps them to musical decisions.
 
-A Streamlit deployment is available here: https://photo-sonification.streamlit.app/
+The central idea is simple: the photo is not translated as a sentence; it is read as a signal. The generated music is the trace left by that reading.
 
-## Main features
+![Photo Sonification Streamlit interface](demo_screenshot.png)
 
-- Load a personal image or use the default sample image.
-- Analyze the photo through luminance, contrast, shadows, highlights, edges, texture entropy and symmetry.
-- Extract Fourier-domain descriptors from the 2D spatial spectrum of the photo.
-- Use a dominant color palette trajectory to generate more varied chord progressions.
-- Convert visual information into a multi-layer musical composition.
-- Generate five musical layers: main melody, texture, bass, pad and chords.
-- Choose instruments automatically from image features or manually from the interface.
-- Adjust manual layer gains in dB.
-- Export the generated audio as MP3.
-- Export the symbolic note events as MIDI.
-- Display photo analysis maps and audio analysis plots.
-- Read the English and French documentation tabs.
+## Live demos
 
-## Method overview
+Primary version:
 
-The app follows the pipeline:
+- Streamlit app: https://photo-sonification.streamlit.app/
+
+Legacy version:
+
+- Hugging Face Space: https://huggingface.co/spaces/trungtindinh/photo_sonification
+
+The Streamlit version is the main version of the project. The Gradio version is kept as the Hugging Face Space entry point.
+
+## What the app does
+
+Given an input image, the app generates a musical result through a deterministic pipeline:
 
 ```text
 Input photo
-|
-+-- Image analysis
-|   +-- luminance, brightness and contrast
-|   +-- shadows and highlights
-|   +-- edge density and texture entropy
-|   +-- symmetry and spatial balance
-|   +-- 2D Fourier descriptors
-|   +-- dominant color palette trajectory
-|
-+-- Musical mapping
-|   +-- key and scale
-|   +-- number of bars
-|   +-- tempo
-|   +-- chord progression
-|   +-- melody and rhythmic activity
-|   +-- instrument selection
-|
-+-- Audio synthesis
-    +-- note events
-    +-- synthetic instruments
-    +-- stereo rendering
-    +-- MP3 and MIDI export
+    |
+    +-- Image analysis
+    |       luminance, contrast, shadows, highlights
+    |       contours, texture entropy, symmetry
+    |       color descriptors
+    |       2D Fourier descriptors
+    |       visual saliency
+    |
+    +-- Musical mapping
+    |       key and scale
+    |       tempo
+    |       number of bars
+    |       complexity and variation strength
+    |       chord progression
+    |       instruments and layer balance
+    |
+    +-- Event generation
+    |       melody
+    |       texture
+    |       bass
+    |       pad
+    |       chords
+    |       optional saliency-driven solo layer
+    |
+    +-- Rendering and export
+            waveform
+            MP3
+            MIDI
+            analysis plots
 ```
 
-The goal is not to produce a random melody from an image. The goal is to keep a clear and explainable connection between visual descriptors and musical structure.
+When the Random Factor is set to zero, the same image and the same parameters produce the same result.
 
-When the random factor is set to zero, the mapping is deterministic: the same photo and the same parameters produce the same musical output.
+## Main features
 
-## Image analysis
+- Load a personal image or use the default image.
+- Analyze the image through luminance, contrast, shadows, highlights, contours, texture entropy and symmetry.
+- Compute Fourier-domain descriptors from the 2D spatial spectrum of the image.
+- Estimate visual saliency from low-level image descriptors.
+- Convert image descriptors into musical variables such as key, scale, tempo, register, note density and variation strength.
+- Generate a multi-layer composition with melody, texture, bass, pad and chord layers.
+- Add an optional saliency-driven Solo layer when GeneralUser GS mode is used.
+- Choose instruments automatically from image features or manually from the interface.
+- Adjust layer gains in decibels.
+- Export the generated result as MP3 and MIDI.
+- Display photo analysis maps and audio analysis plots.
+- Read detailed English and French documentation directly in the app.
 
-The input image is converted to RGB and normalized in the range `[0, 1]`. The luminance image is computed using perceptual weights:
+## Method overview
+
+Photo Sonification follows an interpretable feature-based approach. The goal is not to produce a random melody from an image. The goal is to preserve a visible connection between image descriptors and musical structure.
+
+The app first converts the image into normalized RGB values and computes a luminance image using perceptual weights:
 
 ```text
 Y = 0.2126 R + 0.7152 G + 0.0722 B
 ```
 
-From this luminance image, the app computes brightness, contrast, dynamic range, shadow proportion, highlight proportion and spatial centroids. These features influence the global mood, register, bass strength, highlights and melodic contour.
+From this luminance image, the app computes brightness, contrast, robust dynamic range, shadow proportion, highlight proportion and spatial centroids. These descriptors influence the global register, bass strength, bright accents and melodic contour.
 
-Edges are extracted from the spatial gradient magnitude. The edge map is used to compute edge density and texture entropy. These descriptors influence rhythmic density, attack sharpness and the default composition complexity.
+The app also computes contours from the spatial gradient magnitude. Edge density and texture entropy influence rhythmic density, attacks, complexity and the number of bars.
 
-The app also estimates image symmetry by comparing the luminance image with its left-right and top-bottom flipped versions. This symmetry score controls the default variation strength: symmetric images tend to produce more stable musical forms, while asymmetric images tend to produce stronger musical evolution.
+Symmetry is estimated by comparing the image with its left-right and top-bottom reflections. A symmetric image tends to produce a more stable musical form, while an asymmetric image tends to produce stronger variation.
 
 ## Fourier-domain analysis
 
-The app computes a 2D Fourier transform of the luminance image after mean removal and windowing. The displayed Fourier map is the log-magnitude spectrum.
+The image is also analyzed in the Fourier domain. After mean removal and windowing, the app computes a 2D Fourier transform of the luminance image.
 
-The spectrum is divided into low, mid and high spatial-frequency regions:
+The spatial spectrum is divided into low, mid and high frequency regions:
 
-- low frequencies describe large smooth structures and illumination variations;
+- low frequencies describe large smooth structures;
 - mid frequencies describe medium-scale shapes and transitions;
-- high frequencies describe edges, fine details, micro-textures and noise.
+- high frequencies describe contours, fine details, textures and noise.
 
-Fourier descriptors are used to control sustained layers, bass weight, texture brightness, arpeggio density, rhythmic activity and scientific tempo mapping. A periodic peak score is also computed to detect repeated visual structures such as grids, stripes or strong periodic textures.
+These descriptors influence sustained layers, bass weight, texture activity, instrument brightness and tempo. A periodic peak score is also computed to detect repeated visual structures such as stripes, grids, windows or regular textures.
 
-## Color palette trajectory
+## Visual saliency
 
-A single average hue is often too limited to describe a photo. For this reason, the app extracts a dominant color palette using a deterministic, non-learning k-means procedure in RGB-luminance space.
+The app includes a low-level saliency model. Saliency is not semantic: it does not identify the subject of the image. It is computed from contour strength, color rarity, luminance rarity and a weak center bias.
 
-For each dominant color cluster, the app computes:
-
-- color weight;
-- hue;
-- saturation;
-- brightness;
-- spatial centroid.
-
-The significant color regions are ordered from left to right to create a color palette trajectory. This trajectory is used to generate more diverse chord progressions. Large hue changes, brightness jumps, saturated colors and complex palettes create stronger harmonic motion, while simple palettes tend to produce more stable harmonic loops.
+The resulting saliency map is used to place sparse musical accents. In GeneralUser GS mode, the most salient regions can drive an optional Solo layer: horizontal position influences timing, while vertical position influences pitch.
 
 ## Musical mapping
 
-### Key and scale
+The mapping from image to music is deterministic and explicit.
 
-The tonal center is derived from the dominant hue. The hue angle is mapped onto the 12 chromatic pitch classes:
+The dominant hue contributes to the tonal center. Brightness and warmth influence scale tendency. Edge density, contrast, high-frequency energy and periodicity influence tempo depending on the selected mapping style.
 
-```text
-C, C#, D, D#, E, F, F#, G, G#, A, A#, B
-```
+Available tempo modes are:
 
-If the scale is set to automatic, the app selects a scale from brightness, warmth, saturation and contrast. The available scales are:
+- Scientific: stronger dependence on measured image descriptors;
+- Balanced: softer descriptor-based mapping;
+- Musical: smoother and more conservative tempo behavior;
+- Manual: user-selected BPM.
 
-- Major pentatonic;
-- Minor pentatonic;
-- Major;
-- Natural minor;
-- Dorian;
-- Lydian.
+The app uses the number of bars rather than a direct target duration. The automatic bar range is estimated from texture entropy, edge density, high-frequency Fourier energy and periodicity.
 
-The user can also force a scale manually.
+## Musical layers
 
-### Number of bars
-
-The app uses a number of musical bars rather than a direct target duration in seconds. The automatic minimum, maximum and default values are estimated from texture entropy, edge density, high-frequency Fourier energy and periodicity.
-
-Simple images tend to suggest shorter structures, while more detailed images tend to suggest longer ones.
-
-### Tempo
-
-The mapping style controls how the BPM is computed:
-
-- `Scientific` gives a stronger connection to measurable descriptors such as edge density, contrast, Fourier centroid, high-frequency energy and periodicity.
-- `Balanced` keeps the same idea with a softer mapping.
-- `Musical` produces smoother and more conservative tempi.
-- `Manual` lets the user choose the BPM directly.
-
-### Melody and chords
-
-The main melody is generated by scanning the image from left to right. Each vertical slice contributes brightness, contrast and vertical centroid information. Bright regions placed higher in the image tend to produce higher notes, while darker or lower regions tend to produce lower notes.
-
-The chord progression is generated from the selected key, selected scale and color palette trajectory. The first chord gives a tonal reference, while the following chords follow the visual movement of the dominant color regions.
-
-## Layered composition
-
-The generated music is organized into five layers:
+The generated composition is organized into several layers.
 
 | Layer | Role |
 |---|---|
-| Main | principal melodic contour derived from luminance slices |
-| Texture | arpeggios, highlight notes and small rhythmic impulses |
-| Bass | low-frequency harmonic foundation |
-| Pad | long atmospheric sustained tones |
-| Chord | harmonic support and chord accents |
+| Main | Principal melodic contour derived from image slices |
+| Texture | Arpeggios, highlight notes and short rhythmic impulses |
+| Bass | Low-frequency harmonic foundation |
+| Pad | Sustained harmonic background |
+| Chord | Chord hits and harmonic support |
+| Solo | Optional saliency-driven melodic accents in GeneralUser GS mode |
 
-This structure makes the output more like a compact composition than a sequence of isolated notes.
+This layered structure makes the output closer to a compact composition than to a sequence of isolated notes.
 
 ## Instrument synthesis
 
-The app does not rely on soundfonts, external sample libraries or neural audio models. Each instrument is synthesized with lightweight signal-processing recipes such as additive harmonics, inharmonic partials, vibrato, ADSR envelopes and decay laws.
+The app supports two main rendering approaches.
 
-Available instruments include:
+In Simple mode, instruments are synthesized internally with lightweight signal-processing recipes: additive harmonics, inharmonic partials, vibrato, ADSR envelopes, decay laws and noise components.
 
-- Soft piano;
-- Music box;
-- Bright bell;
-- Celesta;
-- Kalimba;
-- Marimba;
-- Harp;
-- Synth pluck;
-- Warm pad;
-- Glass pad;
-- Cello-like bass;
-- Soft bass;
-- Bowed string;
-- Flute-like lead;
-- Clarinet-like reed.
+Typical internal instruments include:
 
-In automatic mode, the app chooses instruments from image descriptors. Bright and detailed images tend to favor bell-like or plucked timbres. Dark and shadowed images tend to reinforce bass-like or bowed-string layers. Smooth low-frequency images tend to favor sustained pads.
+- soft piano;
+- music box;
+- bright bell;
+- celesta;
+- kalimba;
+- marimba;
+- harp;
+- synth pluck;
+- warm pad;
+- glass pad;
+- cello-like bass;
+- bowed string;
+- flute-like lead;
+- clarinet-like reed.
 
-In manual mode, the user can choose the instrument of each layer and adjust its relative gain in dB.
+In GeneralUser GS mode, the app can use General MIDI programs through FluidSynth and a GeneralUser GS SoundFont. If this backend is not available, the app falls back to the internal Simple synthesis backend while preserving the same musical event structure.
 
-## Random factor
+## Random Factor
 
-The random factor adds controlled perturbations to the image and Fourier-domain analysis used for generation. It does not replace the photo-based mapping by pure randomness.
+The Random Factor introduces controlled perturbations before musical generation. It does not replace the image-based mapping by pure randomness.
 
-The spatial image perturbation and the Fourier perturbation both follow a quadratic law with respect to the slider value. Small values remain subtle, while high values produce more experimental variations.
+At zero, the mapping is strictly reproducible. At higher values, the app becomes more exploratory while still preserving the main visual identity of the image.
 
-The photo analysis panel remains based on the original photo so that the displayed maps and metrics are not polluted by the added perturbation.
+The photo analysis panel remains based on the original image so that the displayed visual descriptors stay interpretable.
 
 ## Repository structure
 
 ```text
 .
-├── app.py                # Gradio / Hugging Face Space entry point
-├── app_sl.py             # Streamlit version of the app
-├── documentation_en.md   # English documentation
-├── documentation_fr.md   # French documentation
-├── requirements.txt      # Python dependencies
-├── LICENSE.txt           # License file
-└── README.md             # Repository and Hugging Face Space description
+├── app.py                 # Legacy Gradio / Hugging Face Space entry point
+├── app_sl.py              # Streamlit entry point
+├── ui.py                  # Streamlit interface
+├── image_analysis.py      # Image descriptors, Fourier analysis and saliency
+├── composition.py         # Musical mapping and note-event generation
+├── audio.py               # Audio rendering, synthesis and export utilities
+├── config.py              # Constants, defaults and application configuration
+├── utils.py               # Shared utility functions
+├── documentation_en.md    # Detailed English documentation
+├── documentation_fr.md    # Detailed French documentation
+├── requirements.txt       # Python dependencies for the Streamlit app
+├── packages.txt           # System packages used by online deployment
+├── LICENSE.txt            # MIT license
+└── README.md              # Repository description
 ```
 
 ## Installation
@@ -227,79 +218,87 @@ Install the Python dependencies:
 pip install -r requirements.txt
 ```
 
-The repository requirements include the core packages used for numerical processing, image manipulation, plotting, audio export and the web interface.
+The core Python dependencies are used for numerical processing, image manipulation, plotting, audio export and the Streamlit interface.
 
-If you want to run the Streamlit version locally and Streamlit is not already installed, install it as well:
-
-```bash
-pip install streamlit
-```
-
-## Run the Gradio app
-
-```bash
-python app.py
-```
-
-The local interface will usually be available at:
-
-```text
-http://127.0.0.1:7860
-```
+Some deployment environments also install the system packages listed in `packages.txt`, especially for MP3/audio handling and optional FluidSynth support.
 
 ## Run the Streamlit app
+
+The Streamlit app is the main version:
 
 ```bash
 streamlit run app_sl.py
 ```
 
-The local interface will usually be available at:
+The local interface is usually available at:
 
 ```text
 http://localhost:8501
+```
+
+## Run the legacy Gradio app
+
+The Gradio app is kept mainly for the Hugging Face Space:
+
+```bash
+python app.py
+```
+
+The local interface is usually available at:
+
+```text
+http://127.0.0.1:7860
+```
+
+If Gradio is not installed in your local environment, install it before running the legacy app:
+
+```bash
+pip install gradio
 ```
 
 ## Hugging Face Space notes
 
 The YAML block at the top of this README is used by Hugging Face Spaces.
 
-The current metadata launches the Gradio version:
+This repository currently keeps the Hugging Face Space on the legacy Gradio entry point:
 
 ```yaml
 sdk: gradio
 app_file: app.py
 ```
 
-If you want Hugging Face to launch the Streamlit version instead, update the metadata to:
-
-```yaml
-sdk: streamlit
-app_file: app_sl.py
-```
-
-In that case, make sure `streamlit` is included in `requirements.txt`.
+Future development is focused on the Streamlit version. The Gradio version is kept for compatibility with the existing Hugging Face deployment.
 
 ## Documentation
 
-The repository includes two Markdown documentation files:
+The repository includes two detailed documentation files:
 
-- `documentation_en.md` for the English documentation;
-- `documentation_fr.md` for the French documentation.
+- `documentation_en.md`: English documentation;
+- `documentation_fr.md`: French documentation.
 
-These files explain the image descriptors, Fourier analysis, color palette trajectory, chord progression generation, musical mapping, synthetic instruments, random factor and audio/MIDI export.
+They explain the signal-processing pipeline, image descriptors, Fourier analysis, visual saliency, musical mapping, instrument selection, rendering, Random Factor and limitations.
 
 ## Notes and limitations
 
-This app is an artistic and educational sonification system. It does not understand the semantic content of a photo. It does not know whether the image contains a person, a landscape or an object. It only uses measurable visual descriptors.
+Photo Sonification is an interpretable feature-based system, not a semantic image-to-music model.
 
-The use of original image resolution can reveal richer details, but it can also make analysis slower on large photos. It can also make the mapping more sensitive to camera noise, compression artifacts and very small textures.
+It does not understand the subject of the photo. A mountain, a face and a building can produce similar music if their luminance, texture, color and Fourier descriptors are similar.
 
-The synthetic instruments are lightweight approximations. They are not meant to replace professional sampled instruments or dedicated sound libraries. Their purpose is to keep the app explainable, deterministic and easy to run online.
+The mapping is designed, not learned. This is a strength for transparency and a limitation for aesthetic universality. Another designer could choose different mappings and obtain different musical behavior.
+
+The relation between color and harmony is not a physical law. It is a controlled artistic convention implemented through deterministic rules.
+
+The synthesis backend is intentionally lightweight. It is suitable for an online educational app, but it is not a replacement for professional music production tools.
 
 ## License
 
-This project is released under the MIT License.
+This project is released under the MIT License. See `LICENSE.txt` for details.
 
 ## Author
 
 Developed by Trung-Tin Dinh as part of a portfolio of interactive signal, audio, image and computer vision mini apps.
+
+- GitHub: https://github.com/trungtin-dinh
+- Streamlit portfolio: https://share.streamlit.io/user/trungtin-dinh
+- LinkedIn: https://www.linkedin.com/in/trung-tin-dinh/ 
+- Medium: https://medium.com/@trungtin.dinh
