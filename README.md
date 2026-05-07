@@ -1,15 +1,3 @@
----
-title: Photo Sonification
-emoji: 🔥
-colorFrom: purple
-colorTo: gray
-sdk: gradio
-sdk_version: 6.14.0
-app_file: app.py
-pinned: false
-license: mit
----
-
 # Photo Sonification
 
 Photo Sonification is an interactive app that converts a still image into a short musical composition.
