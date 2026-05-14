@@ -1,0 +1,59 @@
+name: Build Windows WebView executable
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub release tag to upload the Windows ZIP to"
+        required: true
+        default: "v2.0.0"
+        type: string
+      upload_to_release:
+        description: "Upload ZIP to the GitHub release"
+        required: true
+        default: true
+        type: boolean
+
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows WebView ZIP
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Build Windows package
+        shell: pwsh
+        run: |
+          .\build_windows_webview_exe.ps1
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhotoSonification-Windows-WebView-x86_64
+          path: dist/PhotoSonification-Windows-WebView-x86_64.zip
+          if-no-files-found: error
+
+      - name: Upload ZIP to GitHub release
+        if: ${{ github.event_name == 'release' || inputs.upload_to_release }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          gh release upload "$env:RELEASE_TAG" "dist/PhotoSonification-Windows-WebView-x86_64.zip" `
+            --repo "${{ github.repository }}" `
+            --clobber
