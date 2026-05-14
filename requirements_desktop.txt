@@ -1,0 +1,9 @@
+gradio
+streamlit
+numpy
+pillow
+pillow-heif
+matplotlib
+lameenc
+pyinstaller
+pywebview

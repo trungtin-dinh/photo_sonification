@@ -1,2 +1,17 @@
 __pycache__/
 old/
+dist/
+.pyinstaller_build/
+.release_tools/
+.release_backups/
+*.AppImage
+
+# Local desktop build artifacts
+build/PhotoSonification/
+build/appimage/
+squashfs-root/
+.venv_appimage/
+appimage_error.log
+# Python cache
+*.pyc
+.pytest_cache/
